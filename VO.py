@@ -1,5 +1,7 @@
 from typing import *
 import numpy as np
+import cv2
+import os
 
 class VO():
 
@@ -11,20 +13,49 @@ class VO():
         self.features_3D_coords = None
         self.features_2D_coords = None
 
+        # implemented feature extraction algorithms and their hyper params
+        self.feature_extraction_algorithms_config = {
+            'sift': {
+                'nfeatures': 200
+            }
+        }
 
 
-    def extract_features(self, image):
+    def extract_features(self, image, algorithm: str = "sift"):
         '''
         Parameters
         -------
         image: np.ndarray
+            image of which features are to be extracted
+        algorithm: str
+            feature extraction algorithm
+
+        Comments
+        -------
+        I left the option to implement other feature extraction methods.
+        Using self.feature_extraction_algorithms_config dict in the constructor, the hyperparams can be adjusted.
 
         Returns
         -------
-        sift_features: type?
-
+        sift_features: list[keypoints, descriptors]
+            keypoints: tuple[cv2.KeyPoint]
+                tuple containing all keypoints (cv2.KeyPoint), ordered according to sift score
+                cv2.KeyPoint: object containing angle: float, octave: int, pt: tuple(x,y), response: float, size: float
+            descriptors: nfeatures x 128 np.ndarray
+                contains all SIFT descriptors to the corresponding keyPoints
         '''
-        pass
+
+        # SIFT feature extraction
+        if algorithm is list(self.feature_extraction_algorithms_config.keys())[0]:
+            sift = cv2.SIFT_create(nfeatures=self.feature_extraction_algorithms_config[algorithm]['nfeatures'])
+            keypoints, descriptors = sift.detectAndCompute(image, None)
+        else:
+            raise ValueError(f'algorithm {algorithm} not implemented')
+
+        #TODO: When implementing other algos, make sure the output is of the same format
+        features = [keypoints, descriptors]
+
+        return features
 
     def match_features(self, feature, feature_prev):
         '''
@@ -94,7 +125,14 @@ class VO():
 
         return K
 
-if __name__ == '__main__':
+    def read_image_(self, file: str):
 
-    calib_file = "D:/Master/VAMR/kitti/05/calib.txt"
-    vo = VO(calibFile=calib_file)
+        image = cv2.imread(filename=file)
+
+        if image is None:
+            raise ValueError('image could not be read. Check path and filename.')
+
+        return image
+
+if __name__ == '__main__':
+    pass
