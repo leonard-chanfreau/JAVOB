@@ -12,7 +12,7 @@ class VO():
         # todo: whatever format?
         # self.features_3D_coords = None
         # self.features_2D_coords = None
-        self.query_features = [] # stores {"features", "descriptors"} of the current query image
+        self.query_features = {} # stores {"features", "descriptors"} of the current query image
         self.world_points_3d = [] # MAYBE MAKE THIS (npoints x 131) NDARRAY, where [:,:3] is the [x,y,z] world coordinate and [:,4:] is the 128 descriptor
                                 # dynamic storage of triangulated 3D points in world frame and their descriptors (npoints x 128 np.ndarray)
         
@@ -20,7 +20,7 @@ class VO():
         # implemented feature extraction algorithms and their hyper params
         self.feature_extraction_algorithms_config = {
             'sift': {
-                'nfeatures': 200
+                'nfeatures': 400
             }
         }
 
