@@ -74,14 +74,44 @@ class VO():
         '''
         pass
 
-    def ransac(self, type: str = '8pt'):
+    def estimate_camera_pose(self, method: str = 'p3p'):
         '''
-        todo: call on function triangulate points
+        Estimate the pose of the camera using RANSAC.
+        todo: call on function triangulate camera
+        
+        Parameters
+        ----------
+        method:
+            - 'p3p': use correspondances between 2D and 3D points
         Returns
         -------
 
         '''
-        pass
+        if method == 'p3p':
+            # TODO: Replace by the correct points
+            object_points = np.zeros(10, 3)     # 3D points (Nx3)
+            image_points = np.zeros(10, 2)      # 2D image points (Nx2)
+
+            success, rvec_C_W, t_C_W, inliers = cv2.solvePnPRansac(
+                object_points, image_points.T, cameraMatrix=self.K, distCoeffs=np.zeros((4,1)))
+            if not success:
+                raise RuntimeError("RANSAC is not able to fit the model")
+            
+            R_C_W, _ = cv2.Rodrigues(rvec_C_W)
+            t_C_W = t_C_W[:, 0]
+        
+        elif method == '8pt':
+            # TODO: Replace by the correct points
+            first_img_pt = np.zeros(10, 2)      # 2D points from the first image (Nx2)
+            second_img_pt = np.zeros(10, 2)      # 2D points from the second image (Nx2)
+
+            E, mask = cv2.findEssentialMat(first_img_pt, second_img_pt,
+                                           cameraMatrix=self.K,
+                                           method=cv2.RANSAC, prob=0.99, threshold=1.0)
+            _, R_C_W, t_C_W, mask = cv2.recoverPose(E, first_img_pt, second_img_pt,
+                                                    cameraMatrix=self.K)
+
+
 
     def check_num_inliers(self):
         '''
@@ -92,7 +122,7 @@ class VO():
         '''
         pass
 
-    def triangulate_points(self):
+    def triangulate_camera(self):
         '''
 
         Returns
