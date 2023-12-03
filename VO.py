@@ -10,8 +10,12 @@ class VO():
         self.K = self.read_calib_file_(path=calib_file)
 
         # todo: whatever format?
-        self.features_3D_coords = None
-        self.features_2D_coords = None
+        # self.features_3D_coords = None
+        # self.features_2D_coords = None
+        self.query_features = [] # stores {"features", "descriptors"} of the current query image
+        self.world_points_3d = [] # MAYBE MAKE THIS (npoints x 131) NDARRAY, where [:,:3] is the [x,y,z] world coordinate and [:,4:] is the 128 descriptor
+                                # dynamic storage of triangulated 3D points in world frame and their descriptors (npoints x 128 np.ndarray)
+        
 
         # implemented feature extraction algorithms and their hyper params
         self.feature_extraction_algorithms_config = {
@@ -37,7 +41,7 @@ class VO():
 
         Returns
         -------
-        sift_features: list[keypoints, descriptors]
+        sift_features of the query image: {"keypoints", "descriptors"}
             keypoints: tuple[cv2.KeyPoint]
                 tuple containing all keypoints (cv2.KeyPoint), ordered according to sift score
                 cv2.KeyPoint: object containing angle: float, octave: int, pt: tuple(x,y), response: float, size: float
@@ -53,26 +57,37 @@ class VO():
             raise ValueError(f'algorithm {algorithm} not implemented')
 
         #TODO: When implementing other algos, make sure the output is of the same format
-        features = [keypoints, descriptors]
+        self.query_features = {"keypoints": keypoints, "descriptors": descriptors}
+        
+        #TODO: store query image descriptors in self.world_points_3d ---> THIS MAY GO IN TRIANGULATE() function
 
-        return features
-
-    def match_features(self, descriptor, descriptor_prev):
+    def match_features(self, input: str, descriptor_prev=None, num_previous_descriptors=200):
         '''
         Parameters
         ----------
-        descriptor: np.ndarray of the query image feature descriptors
-        descriptor_prev: np.ndarray of the reference image feature descriptors
+        input: str
+            Specifies the retrieval method. Should be either '2d2d' or '3d2d'.
+        descriptor_prev: np.ndarray of the reference image feature descriptors, optional
+            Used when input is '2d2d' to pass the descriptor of the previous image.
 
         Returns
         -------
-        correspondences between query and preious image descriptors
+        correspondences between query and previous image descriptors
         '''
-        # Note: do we need self here? match_features() does not use any data stored in the VO class 
-        # UNLESS we decide to store the growing number of 3D pts and features in it
+
+        if input not in ['2d2d', '3d2d']:
+            raise ValueError("Invalid retrieval method. Use '2d2d' or '3d2d'.")
+        
+        if input == "2d2d":
+            if descriptor_prev is None:
+                raise ValueError("For '2d2d' retrieval, provide descriptor_prev.")
+        elif input == "3d2d":
+            descriptor_prev = self.world_points_3d[-num_previous_descriptors:, 4:]
+        else:
+            raise ValueError("Invalid retrieval method. Use '2d2d' or '3d2d'.")
 
         bf = cv2.BFMatcher(normType=cv2.NORM_L1, crossCheck=True)
-        matches = bf.match(descriptor, descriptor_prev)
+        matches = bf.match(self.query_features["descriptors"], descriptor_prev)
         return matches
 
     def ransac(self, type: str = '8pt'):
@@ -134,6 +149,8 @@ class VO():
             raise ValueError('image could not be read. Check path and filename.')
 
         return image
+    
+
 
 if __name__ == '__main__':
     pass
