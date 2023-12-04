@@ -68,7 +68,7 @@ class VO():
         method: str
             Should be either '2d2d' or '3d2d'. Specifies the retrieval method. 
         descriptor_prev (optional): np.ndarray of the reference image feature descriptors
-            Used when method is '2d2d' to pass the descriptor of the previous image.
+            Used when method is '2d2d' to manually pass the descriptors of the previous image.
 
         Comments
         -------
@@ -124,20 +124,35 @@ class VO():
         '''
         Parameters
         ----------
-        projMatr1 3x4 projection matrix of the first camera.
-        projMatr2 3x4 projection matrix of the second camera.
-        projPoints1 2xN array of feature points in the first image. It can be also a cell array of feature points {[x,y], ...} or two-channel array of size 1xNx2 or Nx1x2.
-        projPoints2 2xN array of corresponding points in the second image. It can be also a cell array of feature points {[x,y], ...} or two-channel array of size 1xNx2 or Nx1x2.
+        - M_keyframe: 3x4 projection matrix of the first camera (Last Keyframe).
+        - M_query: 3x4 projection matrix of the second camera (Query image).
+        - P_keyframe: 2xN array of feature points in the first image (Last Keyframe). 
+            - It can be also a cell array of feature points {[x,y], ...}
+        - P_query: 2xN array of corresponding points in the second image (Query image).
+            - It can be also a cell array of feature points {[x,y], ...}
 
         Comments
         -------
-        https://amroamroamro.github.io/mexopencv/matlab/cv.triangulatePoints.html
+        Triangulates new 3D points in the scene using the last keyframe and the query image. Should not be called 
+        every frame, only when we are triangulating new 3D features.
 
         Returns
         -------
-
+        points_3d: 4xN array of reconstructed points in homogeneous coordinates [[x;y;z;w], ...]
         '''
 
+        # TODO Replace with correct projection matrices and 2d point arrays, and one set of descriptors for these points
+        N = 100 # number of points (placeholder, depends on matched points from RANSAC)
+        M_keyframe = np.zeros((3,4))
+        M_query = np.zeros((3,4))
+        P_keyframe = np.zeros((2,N))
+        P_query = np.zeros_like(M_keyframe)
+        descriptors = np.zeros((N,128))
+
+        points_3d = cv2.triangulatePoints(M_keyframe, M_query, P_keyframe, P_query)
+        new_3d_points = np.zeros(points_3d.shape[1], 132)
+        new_3d_points[:,:4], new_3d_points[:,4:] = points_3d.T, descriptors # package 3D points and their descriptors
+        self.world_points_3d = np.vstack((self.world_points_3d, new_3d_points))
 
 
     def read_calib_file_(self, path: str):
