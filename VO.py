@@ -61,27 +61,39 @@ class VO():
         
         #TODO: store query image descriptors in self.world_points_3d ---> THIS MAY GO IN TRIANGULATE() function
 
-    def match_features(self, input: str, descriptor_prev=None, num_previous_descriptors=200):
+    def match_features(self, method: str, descriptor_prev=None, num_previous_descriptors=200):
         '''
         Parameters
         ----------
-        input: str
-            Specifies the retrieval method. Should be either '2d2d' or '3d2d'.
-        descriptor_prev: np.ndarray of the reference image feature descriptors, optional
-            Used when input is '2d2d' to pass the descriptor of the previous image.
+        method: str
+            Should be either '2d2d' or '3d2d'. Specifies the retrieval method. 
+        descriptor_prev (optional): np.ndarray of the reference image feature descriptors
+            Used when method is '2d2d' to pass the descriptor of the previous image.
 
+        Comments
+        -------
+        Depending on how we store the SIFT descriptors with known 
+        3D world points, fetching these descriptors for 3d2d triangulation 
+        (descriptor_prev = self.world_points_3d[-num_previous_descriptors:, 4:])
+        may change. See TODO
+        
         Returns
         -------
-        correspondences between query and previous image descriptors
+        A 1-by-N structure array with the following fields:
+            - queryIdx query descriptor index (zero-based index)
+            - trainIdx train descriptor index (zero-based index)
+            - imgIdx train image index (zero-based index)
+            - distance distance between descriptors (scalar)
         '''
 
-        if input not in ['2d2d', '3d2d']:
+        if method not in ['2d2d', '3d2d']:
             raise ValueError("Invalid retrieval method. Use '2d2d' or '3d2d'.")
         
-        if input == "2d2d":
+        if method == '2d2d':
             if descriptor_prev is None:
                 raise ValueError("For '2d2d' retrieval, provide descriptor_prev.")
-        elif input == "3d2d":
+        elif method == '3d2d':
+            # fetch N-last descriptors. TODO Format subject to change depending on how 3D point descriptors stored.
             descriptor_prev = self.world_points_3d[-num_previous_descriptors:, 4:]
         else:
             raise ValueError("Invalid retrieval method. Use '2d2d' or '3d2d'.")
@@ -110,6 +122,16 @@ class VO():
 
     def triangulate_points(self):
         '''
+        Parameters
+        ----------
+        projMatr1 3x4 projection matrix of the first camera.
+        projMatr2 3x4 projection matrix of the second camera.
+        projPoints1 2xN array of feature points in the first image. It can be also a cell array of feature points {[x,y], ...} or two-channel array of size 1xNx2 or Nx1x2.
+        projPoints2 2xN array of corresponding points in the second image. It can be also a cell array of feature points {[x,y], ...} or two-channel array of size 1xNx2 or Nx1x2.
+
+        Comments
+        -------
+        https://amroamroamro.github.io/mexopencv/matlab/cv.triangulatePoints.html
 
         Returns
         -------
