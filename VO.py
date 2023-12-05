@@ -4,19 +4,27 @@ import cv2
 import os
 
 class VO():
-
+    
     def __init__(self, calib_file: str):
 
         self.K = self.read_calib_file_(path=calib_file)
+        self.num_features = 400
+        
+        # Query
+        self.query_features = {} # {cv2.features, cv2.desciptors} storing 2D feature (u,v) and its HoG descriptor. Called via {"features", "descriptors"}
+     
 
-        # todo: whatever format?
-        self.features_3D_coords = None
-        self.features_2D_coords = None
+        # Database
+        self.last_keyframe = {} # overwrite every time new keyframe is created. {cv2.features, cv2.desciptors, image index} 
+                                # storing 2D feature (u,v) and its HoG descriptor. Called via {"features", "descriptors","index"}
+        self.world_points_3d = np.ndarray() # np.ndarray(npoints x 131), where [:,:3] is the [x,y,z] world coordinate and [:,4:] is the 128 descriptor
+                                # dynamic storage of triangulated 3D points in world frame and their descriptors (npoints x 128 np.ndarray)
+        self.poses = np.ndarray() # np.ndarray(3 x 4 x nimages) where 3x4 is [R|t] projection matrix
 
         # implemented feature extraction algorithms and their hyper params
         self.feature_extraction_algorithms_config = {
             'sift': {
-                'nfeatures': 200
+                'nfeatures': self.num_features
             }
         }
 
