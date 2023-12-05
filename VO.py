@@ -145,17 +145,16 @@ class VO():
         points_3d: 4xN array of reconstructed points in homogeneous coordinates [[x;y;z;w], ...]
         '''
 
-        # TODO Replace with correct projection matrices and 2d point arrays, and one set of descriptors for these points
-        N = 100 # number of points (placeholder, depends on matched points from RANSAC)
-        M_keyframe = np.zeros((3,4))
-        M_query = np.zeros((3,4))
-        P_keyframe = np.zeros((2,N))
-        P_query = np.zeros_like(M_keyframe)
-        descriptors = np.zeros((N,128))
+        # TODO add internal indexer (ie. "what image index is the current query image")
+        M_keyframe = self.poses[self.last_keyframe["index"]]
+        M_query = self.poses[:,:,internal_indexer] # set internal indexer to get query pose after written from RANSAC
+        P_keyframe = self.last_keyframe["features"]
+        P_query = self.query_features["features"]
 
         points_3d = cv2.triangulatePoints(M_keyframe, M_query, P_keyframe, P_query)
-        new_3d_points = np.zeros(points_3d.shape[1], 132)
-        new_3d_points[:,:4], new_3d_points[:,4:] = points_3d.T, descriptors # package 3D points and their descriptors
+        
+        new_3d_points = np.zeros(points_3d.shape[1], 131)
+        new_3d_points[:,:4], new_3d_points[:,4:] = points_3d[:3].T, self.query_features["descriptors"] # package 3D points and their descriptors
         self.world_points_3d = np.vstack((self.world_points_3d, new_3d_points))
 
 
