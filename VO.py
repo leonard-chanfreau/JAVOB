@@ -17,7 +17,7 @@ class VO():
         # Database
         self.last_keyframe = {} # overwrite every time new keyframe is created. {cv2.features, cv2.desciptors, image index} 
                                 # storing 2D feature (u,v) and its HoG descriptor. Called via {"features", "descriptors","index"}
-        self.world_points_3d = np.ndarray() # np.ndarray(npoints x 131), where [:,:3] is the [x,y,z] world coordinate and [:,4:] is the 128 descriptor
+        self.world_points_3d = np.ndarray() # np.ndarray(npoints x 131), where [:,:3] is the [x,y,z] world coordinate and [:,3:] is the 128 descriptor
                                 # dynamic storage of triangulated 3D points in world frame and their descriptors (npoints x 128 np.ndarray)
         self.poses = np.ndarray() # np.ndarray(3 x 4 x nimages) where 3x4 is [R|t] projection matrix
 
@@ -73,13 +73,12 @@ class VO():
             Should be either '2d2d' or '3d2d'. Specifies the retrieval method. 
         descriptor_prev (optional): np.ndarray of the reference image feature descriptors
             Used when method is '2d2d' to pass the descriptor of the previous image.
+        num_previous_descriptors: int
+            Number of 3D world points to match new query (keyframe) to.
 
         Comments
         -------
-        Depending on how we store the SIFT descriptors with known 
-        3D world points, fetching these descriptors for 3d2d triangulation 
-        (descriptor_prev = self.world_points_3d[-num_previous_descriptors:, 4:])
-        may change. See TODO
+        TODO Likely still need to tune num_previous_descriptors. How doo we make this dynamic?
         
         Returns
         -------
@@ -97,8 +96,7 @@ class VO():
             if descriptor_prev is None:
                 raise ValueError("For '2d2d' retrieval, provide descriptor_prev.")
         elif method == '3d2d':
-            # fetch N-last descriptors. TODO Format subject to change depending on how 3D point descriptors stored.
-            descriptor_prev = self.world_points_3d[-num_previous_descriptors:, 4:]
+            descriptor_prev = self.world_points_3d[-num_previous_descriptors:, 3:]
         else:
             raise ValueError("Invalid retrieval method. Use '2d2d' or '3d2d'.")
 
