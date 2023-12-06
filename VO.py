@@ -17,9 +17,9 @@ class VO():
         # Database
         self.last_keyframe = {} # overwrite every time new keyframe is created. {cv2.features, cv2.desciptors, image index} 
                                 # storing 2D feature (u,v) and its HoG descriptor. Called via {"features", "descriptors","index"}
-        self.world_points_3d = np.ndarray() # np.ndarray(npoints x 131), where [:,:3] is the [x,y,z] world coordinate and [:,3:] is the 128 descriptor
+        self.world_points_3d = None # np.ndarray(npoints x 131), where [:,:3] is the [x,y,z] world coordinate and [:,3:] is the 128 descriptor
                                 # dynamic storage of triangulated 3D points in world frame and their descriptors (npoints x 128 np.ndarray)
-        self.poses = np.ndarray() # np.ndarray(3 x 4 x nimages) where 3x4 is [R|t] projection matrix
+        self.poses = None # np.ndarray(3 x 4 x nimages) where 3x4 is [R|t] projection matrix
 
         # implemented feature extraction algorithms and their hyper params
         self.feature_extraction_algorithms_config = {
@@ -65,7 +65,7 @@ class VO():
         
         #TODO: store query image descriptors in self.world_points_3d ---> THIS MAY GO IN TRIANGULATE() function
 
-    def match_features(self, method: str, descriptor_prev=None, num_previous_descriptors=200):
+    def match_features(self, method: str, descriptor_prev=None, num_previous_descriptors=None):
         '''
         Parameters
         ----------
