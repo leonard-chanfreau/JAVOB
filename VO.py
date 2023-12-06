@@ -82,43 +82,86 @@ class VO():
         '''
         pass
 
-    def estimate_camera_pose(self, method: str = 'p3p'):
+    def estimate_camera_pose(self, matches: List[cv2.DMatch]) -> int:
+        # TODO: maybe find a way to avoid passing matches (huge list) as an
+        # argument (make it member of the class?)
         '''
-        Estimate the pose of the camera using RANSAC.
-        todo: call on function triangulate camera
+        Estimate the pose of the camera using p3p and RANSAC.\n
+        Uses the 2D points from the query image (self.query_features) previously
+        matched with 3D world points (self.world_points_3d).\n
+        Append the pose to the history of camera poses (self.poses).
         
         Parameters
         ----------
-        method:
-            - 'p3p': use correspondances between 2D and 3D points
+            matches: List[cv2.DMatch]
+                Structure containning the matching information beween
+                self.query_features, and self.world_points_3d.
+
+        Returns
+        -------
+            num_inliers: int
+                Number of inliers used by RANSAC to compute the camera pose.
+        '''
+        # Retrieve matched 2D/3D points.
+        matches_array = np.array(
+            [(match.queryIdx, match.trainIdx) for match in matches])
+        object_points = \
+            self.world_points_3d[matches_array[:,1]]             # 3D pt (Nx3)
+        image_points = \
+            self.query_features["features"][matches_array[:,0]]  # 2D pt (Nx2)
+        # Run PnP
+        success, rvec_C_W, t_C_W, inliers = cv2.solvePnPRansac(
+            object_points, image_points.T,
+            cameraMatrix=self.K, distCoeffs=np.zeros((4,1)))
+        if not success:
+            raise RuntimeError("RANSAC is not able to fit the model")
+        # Extract transformation matrix
+        R_C_W, _ = cv2.Rodrigues(rvec_C_W)
+        t_C_W = t_C_W[:, 0]
+        # Add it to the list of poses
+        T_C_W = np.eye(4)
+        T_C_W[1:3, 1:3] = R_C_W
+        T_C_W[1:3, 4] = t_C_W
+        self.poses = np.append((self.poses, T_C_W[:,:,np.newaxis]), axis = 2)
+        # return the number of points used to estimate the camera pose
+        return inliers.size()
+        
+    def triangulate_point_cloud(self, query_feature, train_feature, matches):
+        # TODO: Maybe these arguments should be members of the class.
+        '''
+        Triangulate the camera pose and a point cloud using 8-pt algorithm and
+        RANSAC.\n
+        Populate the 3D point cloud and append the pose to the history of
+        camera poses (self.poses).
+        
+        Parameters
+        ----------
+        query_feature: np.NdArray
+        train_feature: np.NdArray
+        matches: List[cv2.DMatch]
+
         Returns
         -------
 
         '''
-        if method == 'p3p':
-            # TODO: Replace by the correct points
-            object_points = np.zeros(10, 3)     # 3D points (Nx3)
-            image_points = np.zeros(10, 2)      # 2D image points (Nx2)
-
-            success, rvec_C_W, t_C_W, inliers = cv2.solvePnPRansac(
-                object_points, image_points.T, cameraMatrix=self.K, distCoeffs=np.zeros((4,1)))
-            if not success:
-                raise RuntimeError("RANSAC is not able to fit the model")
-            
-            R_C_W, _ = cv2.Rodrigues(rvec_C_W)
-            t_C_W = t_C_W[:, 0]
-        
-        elif method == '8pt':
-            # TODO: Replace by the correct points
-            first_img_pt = np.zeros(10, 2)      # 2D points from the first image (Nx2)
-            second_img_pt = np.zeros(10, 2)      # 2D points from the second image (Nx2)
-
-            E, mask = cv2.findEssentialMat(first_img_pt, second_img_pt,
-                                           cameraMatrix=self.K,
-                                           method=cv2.RANSAC, prob=0.99, threshold=1.0)
-            _, R_C_W, t_C_W, mask = cv2.recoverPose(E, first_img_pt, second_img_pt,
-                                                    cameraMatrix=self.K)
-
+        # Retrieve matched 2D/2D points.
+        matches_array = np.array(
+            [(match.queryIdx, match.trainIdx) for match in matches])
+        first_img_pt = train_feature[matches_array[:,1]]    # 2D pt (Nx2)
+        second_img_pt = query_feature[matches_array[:,0]]   # 2D pt (Nx2)
+        # Compute essential matrix.
+        E, _ = cv2.findEssentialMat(first_img_pt, second_img_pt,
+                                    cameraMatrix=self.K,
+                                    method=cv2.RANSAC, prob=0.99, threshold=1.0)
+        # Extract pose from it.
+        _, R_C_W, t_C_W, mask, triangulatedPoints = \
+            cv2.recoverPose(E, first_img_pt, second_img_pt,
+                            cameraMatrix=self.K)
+        # Populate 3D point cloud.
+        # TODO: Construct the pair triangulated_point/descriptors using the
+        # inlier mask and the train/query features.
+        # self.world_points_3d = \
+        #     np.append((self.world_points_3d, ), axis=0)
 
 
     def check_num_inliers(self):
@@ -129,14 +172,6 @@ class VO():
 
         '''
         pass
-
-    def triangulate_camera(self):
-        '''
-
-        Returns
-        -------
-
-        '''
 
 
 
