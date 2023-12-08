@@ -12,7 +12,8 @@ class VO():
         
         # Query
         self.query_features = {} # {cv2.features, cv2.desciptors} storing 2D feature (u,v) and its HoG descriptor. Called via {"features", "descriptors"}
-     
+
+        self.keyframe = None
 
         # Database
         self.last_keyframe = {} # overwrite every time new keyframe is created. {cv2.features, cv2.desciptors, image index} 
@@ -28,20 +29,17 @@ class VO():
             }
         }
 
-
     def extract_features(self, image, algorithm: str = "sift"):
         '''
+        I left the option to implement other feature extraction methods.
+        Using self.feature_extraction_algorithms_config dict in the constructor, the hyperparams can be adjusted.
+
         Parameters
         -------
         image: np.ndarray
             image of which features are to be extracted
         algorithm: str
             feature extraction algorithm
-
-        Comments
-        -------
-        I left the option to implement other feature extraction methods.
-        Using self.feature_extraction_algorithms_config dict in the constructor, the hyperparams can be adjusted.
 
         Returns
         -------
@@ -64,6 +62,45 @@ class VO():
         features = [keypoints, descriptors]
 
         return features
+
+    def initialize_point_cloud(self, image: np.ndarray):
+        '''
+        initialize point cloud if depth uncertainty is below threshold
+
+        Parameters
+        ----------
+        image
+
+        Returns
+        -------
+
+        '''
+
+        pass
+
+    def run(self, image: np.ndarray):
+        '''
+
+        Parameters
+        ----------
+        image
+
+        Returns
+        -------
+
+        '''
+
+        if self.keyframe is None:
+            self.keyframe = image
+            return
+
+        if self.world_points_3d.shape[0] == 0:
+            self.initialize_point_cloud(image=image)
+            return
+
+        # todo the rest
+
+        a = 2
 
     def match_features(self, feature, feature_prev):
         '''
