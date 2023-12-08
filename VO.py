@@ -18,9 +18,9 @@ class VO():
         # Database
         self.last_keyframe = {} # overwrite every time new keyframe is created. {cv2.features, cv2.desciptors, image index} 
                                 # storing 2D feature (u,v) and its HoG descriptor. Called via {"features", "descriptors","index"}
-        self.world_points_3d = np.ndarray() # np.ndarray(npoints x 131), where [:,:3] is the [x,y,z] world coordinate and [:,4:] is the 128 descriptor
+        self.world_points_3d = None # np.ndarray(npoints x 131), where [:,:3] is the [x,y,z] world coordinate and [:,3:] is the 128 descriptor
                                 # dynamic storage of triangulated 3D points in world frame and their descriptors (npoints x 128 np.ndarray)
-        self.poses = np.ndarray() # np.ndarray(3 x 4 x nimages) where 3x4 is [R|t] projection matrix
+        self.poses = None # np.ndarray(3 x 4 x nimages) where 3x4 is [R|t] projection matrix
 
         # implemented feature extraction algorithms and their hyper params
         self.feature_extraction_algorithms_config = {
@@ -43,7 +43,7 @@ class VO():
 
         Returns
         -------
-        sift_features: list[keypoints, descriptors]
+        sift_features of the query image: {"keypoints", "descriptors"}
             keypoints: tuple[cv2.KeyPoint]
                 tuple containing all keypoints (cv2.KeyPoint), ordered according to sift score
                 cv2.KeyPoint: object containing angle: float, octave: int, pt: tuple(x,y), response: float, size: float
@@ -59,9 +59,9 @@ class VO():
             raise ValueError(f'algorithm {algorithm} not implemented')
 
         #TODO: When implementing other algos, make sure the output is of the same format
-        features = [keypoints, descriptors]
+        self.query_features = {"keypoints": keypoints, "descriptors": descriptors}
 
-        return features
+        #TODO: store query image descriptors in self.world_points_3d ---> THIS MAY GO IN TRIANGULATE() function
 
     def initialize_point_cloud(self, image: np.ndarray):
         '''
@@ -104,22 +104,48 @@ class VO():
 
         a = 2
 
-    def match_features(self, feature, feature_prev):
+    def match_features(self, method: str, descriptor_prev=None, num_matches_previous=None):
         '''
-
         Parameters
         ----------
-        feature: np.ndarray
+        method: str
+            Should be either '2d2d' or '3d2d'. Specifies the retrieval method.
+        descriptor_prev (for 2d2d only): np.ndarray
+            Reference image feature descriptors.
+            Used when method is '2d2d' to pass the descriptor of the previous image.
+        num_matches_previous (for 3d2d only): int
+            Number of 3D world points to match new query (keyframe) to.
+            For example, set equal to len(self.query_features)
 
-        feature_prev: np.ndarray
-
+        Comments
+        -------
+        TODO Likely still need to tune num_previous_descriptors. How doo we make this dynamic?
 
         Returns
         -------
-        correspondences
-
+        A 1-by-N structure array with the following fields:
+            - queryIdx query descriptor index (zero-based index)
+            - trainIdx train descriptor index (zero-based index)
+            - imgIdx train image index (zero-based index)
+            - distance distance between descriptors (scalar)
         '''
-        pass
+
+        if method not in ['2d2d', '3d2d']:
+            raise ValueError("Invalid retrieval method. Use '2d2d' or '3d2d'.")
+
+        if method == '2d2d':
+            if descriptor_prev is None:
+                raise ValueError("For '2d2d' retrieval, provide descriptor_prev.")
+        elif method == '3d2d':
+            if num_matches_previous is None:
+                raise ValueError("Please set a valid number of matches to create. Value must be positive.")
+            descriptor_prev = self.world_points_3d[-num_matches_previous:, 3:]
+        else:
+            raise ValueError("Invalid retrieval method. Use '2d2d' or '3d2d'.")
+
+        bf = cv2.BFMatcher(normType=cv2.NORM_L1, crossCheck=True)
+        matches = bf.match(self.query_features["descriptors"], descriptor_prev)
+        return matches
 
     def estimate_camera_pose(self, matches: List[cv2.DMatch]) -> int:
         # TODO: maybe find a way to avoid passing matches (huge list) as an
@@ -265,6 +291,8 @@ class VO():
             raise ValueError('image could not be read. Check path and filename.')
 
         return image
+
+
 
 if __name__ == '__main__':
     pass
