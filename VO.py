@@ -119,14 +119,98 @@ class VO():
         '''
         pass
 
-    def ransac(self, type: str = '8pt'):
+    def estimate_camera_pose(self, matches: List[cv2.DMatch]) -> int:
+        # TODO: maybe find a way to avoid passing matches (huge list) as an
+        # argument (make it member of the class?)
         '''
-        todo: call on function triangulate points
+        Estimate the pose of the camera using p3p and RANSAC.\n
+        Uses the 2D points from the query image (self.query_features) previously
+        matched with 3D world points (self.world_points_3d).\n
+        Append the pose to the history of camera poses (self.poses).
+        
+        Parameters
+        ----------
+            matches: List[cv2.DMatch]
+                Structure containning the matching information beween
+                self.query_features, and self.world_points_3d.
+
+        Returns
+        -------
+            num_inliers: int
+                Number of inliers used by RANSAC to compute the camera pose.
+        '''
+        # Retrieve matched 2D/3D points.
+        matches_array = np.array(
+            [(match.queryIdx, match.trainIdx) for match in matches])
+        object_points = \
+            self.world_points_3d[matches_array[:,1], 0:3]        # 3D pt (Nx3)
+        image_points = \
+            self.query_features["features"][matches_array[:,0]]  # 2D pt (Nx2)
+        # Run PnP
+        success, rvec_C_W, t_C_W, inliers = cv2.solvePnPRansac(
+            object_points, image_points.T,
+            cameraMatrix=self.K, distCoeffs=np.zeros((4,1)))
+        if not success:
+            raise RuntimeError("RANSAC is not able to fit the model")
+        # Extract transformation matrix
+        R_C_W, _ = cv2.Rodrigues(rvec_C_W)
+        t_C_W = t_C_W[:, 0]
+        # Add it to the list of poses
+        T_C_W = np.eye(4)
+        T_C_W[1:3, 1:3] = R_C_W
+        T_C_W[1:3, 4] = t_C_W
+        self.poses = np.append((self.poses, T_C_W[:,:,np.newaxis]), axis = 2)
+        # return the number of points used to estimate the camera pose
+        return inliers.size()
+        
+    def triangulate_point_cloud(
+            self, query_feature: np.NdArray, train_feature: np.NdArray,
+            matches: List[cv2.DMatch]):
+        # TODO: Maybe these arguments should be members of the class.
+        '''
+        Triangulate the camera pose and a point cloud using 8-pt algorithm and
+        RANSAC.\n
+        Populate the 3D point cloud and append the pose to the history of
+        camera poses (self.poses).
+        
+        Parameters
+        ----------
+        query_feature: np.NdArray
+        train_feature: np.NdArray
+        matches: List[cv2.DMatch]
+
         Returns
         -------
 
         '''
-        pass
+        # Retrieve matched 2D/2D points.
+        matches_array = np.array(
+            [(match.queryIdx, match.trainIdx) for match in matches])
+        first_img_pt = train_feature["features"][matches_array[:,1]]    # 2D pt (Nx2)
+        second_img_pt = query_feature["features"][matches_array[:,0]]   # 2D pt (Nx2)
+        # Compute essential matrix.
+        E, essential_inliers = cv2.findEssentialMat(
+            first_img_pt, second_img_pt,
+            cameraMatrix=self.K,
+            method=cv2.RANSAC, prob=0.99, threshold=1.0)
+        # Extract pose from it.
+        _, R_C_W, t_C_W, inlier_mask, triangulatedPoints = \
+            cv2.recoverPose(E, first_img_pt, second_img_pt,
+                            cameraMatrix=self.K,
+                            mask=essential_inliers)
+        # Create 3D feature concatenating normalized triangulated points and
+        # descriptors.
+        norm_triangulated_points = \
+            triangulatedPoints[:, 1:3] / triangulatedPoints[:, 4]
+        feature_3d = np.hstack(norm_triangulated_points,
+                               query_feature["descriptor"])
+        # Remove outliers and populate point cloud
+        feature_3d = feature_3d[inlier_mask[:,0].astype(np.bool)]
+        self.world_points_3d = \
+            np.vstack(self.world_points_3d, norm_triangulated_points)
+        # Append pose to history
+        self.poses = \
+            np.dstack(self.poses, np.vstack(R_C_W, t_C_W))
 
     def check_num_inliers(self):
         '''
@@ -136,14 +220,6 @@ class VO():
 
         '''
         pass
-
-    def triangulate_points(self):
-        '''
-
-        Returns
-        -------
-
-        '''
 
 
 
