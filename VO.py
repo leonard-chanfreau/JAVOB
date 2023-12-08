@@ -76,6 +76,8 @@ class VO():
 
         '''
 
+
+        a = 2
         pass
 
     def run(self, image: np.ndarray):
@@ -164,7 +166,7 @@ class VO():
         return inliers.size()
         
     def triangulate_point_cloud(
-            self, query_feature: np.NdArray, train_feature: np.NdArray,
+            self, query_feature: np.ndarray, train_feature: np.ndarray,
             matches: List[cv2.DMatch]):
         # TODO: Maybe these arguments should be members of the class.
         '''
@@ -221,7 +223,16 @@ class VO():
         '''
         pass
 
+    def set_keyframe_(self, image: np.ndarray):
+        '''
+        set the current frame, atm only for debugging
 
+        Parameters
+        ----------
+        image: np.ndarray
+        '''
+
+        self.keyframe = image
 
     def read_calib_file_(self, path: str):
         '''

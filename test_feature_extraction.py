@@ -19,7 +19,4 @@ if __name__ == '__main__':
     a = 2
 
 
-    # vo.initialize_point_cloud(list of images)
 
-    for image in image
-    #   vo.run()
