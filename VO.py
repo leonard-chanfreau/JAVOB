@@ -106,7 +106,7 @@ class VO():
         matches_array = np.array(
             [(match.queryIdx, match.trainIdx) for match in matches])
         object_points = \
-            self.world_points_3d[matches_array[:,1]]             # 3D pt (Nx3)
+            self.world_points_3d[matches_array[:,1], 0:3]        # 3D pt (Nx3)
         image_points = \
             self.query_features["features"][matches_array[:,0]]  # 2D pt (Nx2)
         # Run PnP
