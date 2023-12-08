@@ -65,16 +65,18 @@ class VO():
         
         #TODO: store query image descriptors in self.world_points_3d ---> THIS MAY GO IN TRIANGULATE() function
 
-    def match_features(self, method: str, descriptor_prev=None, num_previous_descriptors=None):
+    def match_features(self, method: str, descriptor_prev=None, num_matches_previous=None):
         '''
         Parameters
         ----------
         method: str
             Should be either '2d2d' or '3d2d'. Specifies the retrieval method. 
-        descriptor_prev (optional): np.ndarray of the reference image feature descriptors
+        descriptor_prev (for 2d2d only): np.ndarray
+            Reference image feature descriptors.
             Used when method is '2d2d' to pass the descriptor of the previous image.
-        num_previous_descriptors: int
+        num_matches_previous (for 3d2d only): int
             Number of 3D world points to match new query (keyframe) to.
+            For example, set equal to len(self.query_features)
 
         Comments
         -------
@@ -96,7 +98,9 @@ class VO():
             if descriptor_prev is None:
                 raise ValueError("For '2d2d' retrieval, provide descriptor_prev.")
         elif method == '3d2d':
-            descriptor_prev = self.world_points_3d[-num_previous_descriptors:, 3:]
+            if num_matches_previous is None:
+                raise ValueError("Please set a valid number of matches to create. Value must be positive.")
+            descriptor_prev = self.world_points_3d[-num_matches_previous:, 3:]
         else:
             raise ValueError("Invalid retrieval method. Use '2d2d' or '3d2d'.")
 

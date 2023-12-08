@@ -90,7 +90,7 @@ if __name__ == '__main__':
         else:
             
             num_previous_descriptors = 50 # (Hardcoding for testing), trying to match 50 of existing 3D points to query points
-            matches3d2d = vo.match_features("3d2d", num_previous_descriptors=num_previous_descriptors)
+            matches3d2d = vo.match_features("3d2d", num_matches_previous=num_previous_descriptors)
 
             object_points = np.array([vo.world_points_3d[-num_previous_descriptors:,:3][match.trainIdx] for match in matches3d2d])
             query_points = np.array([query_features["keypoints"][match.queryIdx] for match in matches3d2d])
@@ -125,10 +125,10 @@ if __name__ == '__main__':
             # extract projectPoints output to get u,v. Can probably fix this with different datastructures?
             projected_3D_points = np.hstack((projected_3D_points[0][:,:,0], projected_3D_points[0][:,:,1])) 
 
-            # NOTE/TODO fails, can't read projected_3D_points since not cv2.Keypoint dtype
-            img3 = cv2.drawMatches(query_img, recover_inlier_2d_points, 
-                                   prev_img, projected_3D_points,
-                                   matches3d2d, None, flags=2)
+            # # NOTE/TODO fails, can't read projected_3D_points since not cv2.Keypoint dtype
+            # img3 = cv2.drawMatches(query_img, recover_inlier_2d_points, 
+            #                        prev_img, projected_3D_points,
+            #                        matches3d2d, None, flags=2)
 
         cv2.imshow('2d2d SFM then 3d2d Matching', img3)
         cv2.waitKey(1000)
