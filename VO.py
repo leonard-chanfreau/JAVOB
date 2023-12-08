@@ -166,7 +166,7 @@ class VO():
         return inliers.size()
         
     def triangulate_point_cloud(
-            self, query_feature: np.ndarray, train_feature: np.ndarray,
+            self, query_feature: np.NdArray, train_feature: np.NdArray,
             matches: List[cv2.DMatch]):
         # TODO: Maybe these arguments should be members of the class.
         '''
