@@ -4,25 +4,60 @@ import cv2
 import os
 
 class VO():
+    """
+    Incremental Visual Odometry Pipeline.
+
+    Attributes
+    ----------
+    K: np.ndArray (3x3)
+        Calibration Matrix.
+    num_feature: int
+        Number of features extracted from each image.
+    query_features: Dict
+        Features of the query image: features (u,v) (key "features") and their
+        HoG descriptor (key "descriptors").
+    last_keyframe: Dict
+        Features of the last keyframe: 2D features (u,v) (key "features"), their
+        HoG descriptor (key "descriptors") and the index of the image (key
+        "index").\n
+        Overwrote every time new keyframe is created.
+    world_points_3d: np.Ndarray (npoints x 131)
+        Point Cloud: [x,y,z] world coordinate and the corresponding 1x128 HoG
+        descriptor.\n
+        Dynamically incremented every time we a new keyframe is used to
+        triangulate new 3d points.
+    poses: np.Ndarray (3 x 4 x nimages)
+        History of the camera poses: stacked [R|t] projection matrices.
+    feature_extraction_config: Dict
+        Contain all config parameters required by the feature extraction
+        algorithm.
+
+    Methods
+    -------
+    run(img)
+        Run the VO pipeline to estimate the camera pose of the new image.
+    """
     
     def __init__(self, calib_file: str):
+        """
+        Initialize VO Pipeline.
 
+        Parameters
+        ----------
+        calib_file : str
+            Path to the file containing the calibration matrix.
+        """
+        # Parameters
         self.K = self.read_calib_file_(path=calib_file)
         self.num_features = 400
-        
-        # Query
-        self.query_features = {} # {cv2.features, cv2.desciptors} storing 2D feature (u,v) and its HoG descriptor. Called via {"features", "descriptors"}
-     
-
-        # Database
-        self.last_keyframe = {} # overwrite every time new keyframe is created. {cv2.features, cv2.desciptors, image index} 
-                                # storing 2D feature (u,v) and its HoG descriptor. Called via {"features", "descriptors","index"}
-        self.world_points_3d = None # np.ndarray(npoints x 131), where [:,:3] is the [x,y,z] world coordinate and [:,3:] is the 128 descriptor
-                                # dynamic storage of triangulated 3D points in world frame and their descriptors (npoints x 128 np.ndarray)
-        self.poses = None # np.ndarray(3 x 4 x nimages) where 3x4 is [R|t] projection matrix
-
-        # implemented feature extraction algorithms and their hyper params
-        self.feature_extraction_algorithms_config = {
+        # Query image info
+        self.query_features = {}
+        # Database storage
+        self.last_keyframe = {}
+        self.world_points_3d = None
+        self.poses = None
+        # Hyper parameters for the extraction algorithms
+        self.feature_extraction_config = {
             'sift': {
                 'nfeatures': self.num_features
             }
@@ -41,72 +76,83 @@ class VO():
         Comments
         -------
         I left the option to implement other feature extraction methods.
-        Using self.feature_extraction_algorithms_config dict in the constructor, the hyperparams can be adjusted.
+        Using self.feature_extraction_config dict in the constructor,
+        the hyperparameters can be adjusted.
 
         Returns
         -------
         sift_features of the query image: {"keypoints", "descriptors"}
             keypoints: tuple[cv2.KeyPoint]
-                tuple containing all keypoints (cv2.KeyPoint), ordered according to sift score
-                cv2.KeyPoint: object containing angle: float, octave: int, pt: tuple(x,y), response: float, size: float
+                tuple containing all keypoints (cv2.KeyPoint), ordered according
+                to sift score.\n
+                cv2.KeyPoint: object containing angle: float, octave: int,
+                pt: tuple(x,y), response: float, size: float
             descriptors: nfeatures x 128 np.ndarray
                 contains all SIFT descriptors to the corresponding keyPoints
         '''
-
-        # SIFT feature extraction
-        if algorithm is list(self.feature_extraction_algorithms_config.keys())[0]:
-            sift = cv2.SIFT_create(nfeatures=self.feature_extraction_algorithms_config[algorithm]['nfeatures'])
+        # Select the feature extraction algorithm.
+        if algorithm == 'sift':
+            # Extract SIFT feature.
+            sift = cv2.SIFT_create(
+                nfeatures =
+                self.feature_extraction_config[algorithm]['nfeatures'])
             keypoints, descriptors = sift.detectAndCompute(image, None)
         else:
             raise ValueError(f'algorithm {algorithm} not implemented')
+        # TODO: When implementing other algos, make sure the output is of the
+        # same format.
+        self.query_features = {"keypoints": keypoints,
+                               "descriptors": descriptors}
 
-        #TODO: When implementing other algos, make sure the output is of the same format
-        self.query_features = {"keypoints": keypoints, "descriptors": descriptors}
-        
-        #TODO: store query image descriptors in self.world_points_3d ---> THIS MAY GO IN TRIANGULATE() function
-
-    def match_features(self, method: str, descriptor_prev=None, num_matches_previous=None):
+    def match_features(self, method: str,
+                       descriptor_prev = None, num_matches_previous = None):
         '''
         Parameters
         ----------
         method: str
-            Should be either '2d2d' or '3d2d'. Specifies the retrieval method. 
+            Retrieval method ('2d2d' or '3d2d').
         descriptor_prev (for 2d2d only): np.ndarray
-            Reference image feature descriptors.
-            Used when method is '2d2d' to pass the descriptor of the previous image.
+            Train image feature descriptors.\n
+            Used when method is '2d2d' to pass the descriptor of the train
+            image.
         num_matches_previous (for 3d2d only): int
-            Number of 3D world points to match new query (keyframe) to.
+            Number of 3D world points to match new query (keyframe) to.\n
             For example, set equal to len(self.query_features)
 
         Comments
-        -------
-        TODO Likely still need to tune num_previous_descriptors. How doo we make this dynamic?
+        --------
+        TODO Likely still need to tune num_previous_descriptors.
+        How do we make this dynamic?
         
         Returns
         -------
-        A 1-by-N structure array with the following fields:
-            - queryIdx query descriptor index (zero-based index)
-            - trainIdx train descriptor index (zero-based index)
-            - imgIdx train image index (zero-based index)
-            - distance distance between descriptors (scalar)
+        matches: List[cv2.DMatch]
+            Matches between descriptors from the 2d train image (resp. 3d point
+            cloud) and from the 2d query image.\n
+            Each cv2.DMatch object contains the following information:\n
+                - queryIdx: The index of the query descriptor (zero-based index).\n
+                - trainIdx: The index of the train descriptor (zero-based index).\n
+                - imgIdx: The index of the train image (zero-based index).\n
+                - distance: The distance between the descriptors (scalar).\n
         '''
-
-        if method not in ['2d2d', '3d2d']:
-            raise ValueError("Invalid retrieval method. Use '2d2d' or '3d2d'.")
-        
+        # Select the correct method.
         if method == '2d2d':
+            # Descriptors from a previous train image are expected.
             if descriptor_prev is None:
-                raise ValueError("For '2d2d' retrieval, provide descriptor_prev.")
+                raise ValueError(
+                    "For '2d2d' retrieval, provide descriptor_prev.")
         elif method == '3d2d':
+            # Select num_matches_previous descriptors from the 3d point cloud
             if num_matches_previous is None:
-                raise ValueError("Please set a valid number of matches to create. Value must be positive.")
+                raise ValueError(
+                    "Please set a valid number of matches to create. Value must"
+                    " be positive.")
             descriptor_prev = self.world_points_3d[-num_matches_previous:, 3:]
         else:
             raise ValueError("Invalid retrieval method. Use '2d2d' or '3d2d'.")
-
+        # Match descriptors with query image descriptors
         bf = cv2.BFMatcher(normType=cv2.NORM_L1, crossCheck=True)
-        matches = bf.match(self.query_features["descriptors"], descriptor_prev)
-        return matches
+        return bf.match(self.query_features["descriptors"], descriptor_prev)
 
     def estimate_camera_pose(self, matches: List[cv2.DMatch]) -> int:
         # TODO: maybe find a way to avoid passing matches (huge list) as an
@@ -120,7 +166,7 @@ class VO():
         Parameters
         ----------
             matches: List[cv2.DMatch]
-                Structure containning the matching information beween
+                Structure containing the matching information between
                 self.query_features, and self.world_points_3d.
 
         Returns
@@ -153,7 +199,7 @@ class VO():
         return inliers.size()
         
     def triangulate_point_cloud(
-            self, query_feature: np.NdArray, train_feature: np.NdArray,
+            self, query_feature: dict, train_feature: dict,
             matches: List[cv2.DMatch]):
         # TODO: Maybe these arguments should be members of the class.
         '''
@@ -164,8 +210,8 @@ class VO():
         
         Parameters
         ----------
-        query_feature: np.NdArray
-        train_feature: np.NdArray
+        query_feature: dict of "features" and "descriptor"
+        train_feature: dict of "features" and "descriptor"
         matches: List[cv2.DMatch]
 
         Returns
@@ -191,15 +237,15 @@ class VO():
         # descriptors.
         norm_triangulated_points = \
             triangulatedPoints[:, 1:3] / triangulatedPoints[:, 4]
-        feature_3d = np.hstack(norm_triangulated_points,
-                               query_feature["descriptor"])
+        feature_3d = np.hstack((norm_triangulated_points,
+                                query_feature["descriptor"]))
         # Remove outliers and populate point cloud
         feature_3d = feature_3d[inlier_mask[:,0].astype(np.bool)]
         self.world_points_3d = \
-            np.vstack(self.world_points_3d, norm_triangulated_points)
+            np.vstack((self.world_points_3d, norm_triangulated_points))
         # Append pose to history
         self.poses = \
-            np.dstack(self.poses, np.vstack(R_C_W, t_C_W))
+            np.dstack((self.poses, np.vstack(R_C_W, t_C_W)))
 
     def check_num_inliers(self):
         '''
@@ -214,7 +260,7 @@ class VO():
 
     def read_calib_file_(self, path: str):
         '''
-        read calibration file to get camera intrisics
+        read calibration file to get camera intrinsics
 
         Parameters
         ----------
@@ -243,8 +289,3 @@ class VO():
             raise ValueError('image could not be read. Check path and filename.')
 
         return image
-    
-
-
-if __name__ == '__main__':
-    pass
