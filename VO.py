@@ -22,6 +22,9 @@ class VO():
                                 # dynamic storage of triangulated 3D points in world frame and their descriptors (npoints x 128 np.ndarray)
         self.poses = np.hstack([np.eye(3), np.zeros((3,1))])# np.ndarray(3 x 4 x nimages) where 3x4 is [R|t] projection matrix
 
+        # interna state
+        self.iteration = 0
+
         # implemented feature extraction algorithms and their hyper params
         self.feature_extraction_algorithms_config = {
             'sift': {
@@ -64,18 +67,20 @@ class VO():
         #TODO: store query image descriptors in self.world_points_3d ---> THIS MAY GO IN TRIANGULATE() function
 
     def initialize_point_cloud(self, image: np.ndarray):
-        '''
-        initialize point cloud if depth uncertainty is below threshold
+        """
+        initialize point cloud if depth uncertainty is below threshold (i.e. frames are sufficiently far apart)
 
         Parameters
         ----------
-        image
+        image:
+            query image
 
         Returns
         -------
 
-        '''
+        """
 
+        # todo hyperparam dict
         thresh = 0.1
 
         # extract and set query features
@@ -84,7 +89,8 @@ class VO():
         # match query and keyframe features
         matches = self.match_features(method="2d2d")
 
-        # initialize point cloud
+        # initialize preliminary point cloud
+        # todo remove self.... as args?
         pose, points_3d = self.triangulate_point_cloud(query_feature=self.query_features, train_feature=self.keyframe_features, matches=matches)
 
         # get Z coord and average depth
@@ -94,6 +100,7 @@ class VO():
         # baseline
         baseline = np.linalg.norm(pose[:,-1])
 
+        # check average depth criterion
         if baseline/average_depth > thresh:
             self.world_points_3d = points_3d
 
@@ -111,19 +118,31 @@ class VO():
 
         '''
 
+        # set very first keyframe
+        # todo second 'or' condition if new keyframe need to be initialized
         if self.keyframe is None:
             self.keyframe = image
             self.keyframe_features = self.extract_features(image=image, algorithm="sift")
+            self.iteration += 1
             return
 
+        # initialize first point cloud
         if self.world_points_3d is None:
             self.initialize_point_cloud(image=image)
-            a = 2
+            self.iteration += 1
             return
 
-        # todo the rest
+        # continuous run process
+
+        # extract features
+        self.query_features = self.extract_features(image=image, algorithm="sift")
+
+        # match features
+        matches = self.match_features(method="3d2d")
 
         a = 2
+        self.iteration += 1
+
 
     def match_features(self, method: str, descriptor_prev=None, num_matches_previous=None):
         '''
@@ -157,8 +176,8 @@ class VO():
         if method == '2d2d':
             descriptor_prev = self.keyframe_features['descriptors']
         elif method == '3d2d':
-            if num_matches_previous is None:
-                raise ValueError("Please set a valid number of matches to create. Value must be positive.")
+            # if num_matches_previous is None:
+            #     raise ValueError("Please set a valid number of matches to create. Value must be positive.")
             descriptor_prev = self.world_points_3d[-num_matches_previous:, 3:]
         else:
             raise ValueError("Invalid retrieval method. Use '2d2d' or '3d2d'.")
@@ -212,8 +231,8 @@ class VO():
         return inliers.size()
         
     def triangulate_point_cloud(
-            self, query_feature: np.ndarray, train_feature: np.ndarray,
-            matches: List[cv2.DMatch]):
+            self, query_feature: Dict[tuple[cv2.Feature2D], np.ndarray], train_feature: Dict[tuple[cv2.Feature2D], np.ndarray],
+            matches: tuple[cv2.DMatch]):
         # TODO: Maybe these arguments should be members of the class.
         '''
         Triangulate the camera pose and a point cloud using 8-pt algorithm and
