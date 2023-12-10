@@ -20,7 +20,9 @@ class VO():
                                 # storing 2D feature (u,v) and its HoG descriptor. Called via {"features", "descriptors"}
         self.world_points_3d = None # np.ndarray(npoints x 131), where [:,:3] is the [x,y,z] world coordinate and [:,3:] is the 128 descriptor
                                 # dynamic storage of triangulated 3D points in world frame and their descriptors (npoints x 128 np.ndarray)
-        self.poses = np.hstack([np.eye(3), np.zeros((3,1))])# np.ndarray(3 x 4 x nimages) where 3x4 is [R|t] projection matrix
+        self.num_keyframe_points_3d = None
+
+        self.poses = [np.hstack([np.eye(3), np.zeros((3,1))])]# list(np.ndarray(3 x 4 x nimages)) where 3x4 is [R|t] projection matrix
 
         # interna state
         self.iteration = 0
@@ -66,7 +68,7 @@ class VO():
         return {"keypoints": keypoints, "descriptors": descriptors}
         #TODO: store query image descriptors in self.world_points_3d ---> THIS MAY GO IN TRIANGULATE() function
 
-    def initialize_point_cloud(self, image: np.ndarray):
+    def initialize_point_cloud(self, image: np.ndarray, mode: str = "init"):
         """
         initialize point cloud if depth uncertainty is below threshold (i.e. frames are sufficiently far apart)
 
@@ -80,8 +82,8 @@ class VO():
 
         """
 
-        # todo hyperparam dict
-        thresh = 0.1
+        if mode not in ["init", "expand"]:
+            raise ValueError("Invalid mode. Use 'init' or 'expand'.")
 
         # extract and set query features
         self.query_features = self.extract_features(image=image)
@@ -93,18 +95,28 @@ class VO():
         # todo remove self.... as args?
         pose, points_3d = self.triangulate_point_cloud(query_feature=self.query_features, train_feature=self.keyframe_features, matches=matches)
 
-        # get Z coord and average depth
-        depth = points_3d[:,2]
-        average_depth = np.mean(depth)
+        if mode == "init":
+            # todo hyperparam dict
+            thresh = 0.1
 
-        # baseline
-        baseline = np.linalg.norm(pose[:,-1])
+            # get Z coord and average depth and baseline
+            depth = points_3d[:,2]
+            average_depth = np.mean(depth)
+            baseline = np.linalg.norm(pose[:,-1])
 
-        # check average depth criterion
-        if baseline/average_depth > thresh:
-            self.world_points_3d = points_3d
+            # check average depth criterion
+            if baseline/average_depth > thresh:
+                self.world_points_3d = points_3d
+                self.num_keyframe_points_3d = points_3d.shape[0]
+                return True
+            else:
+                return False
 
-        a = 2
+        if mode == "expand":
+            # todo: i would not concatenate, list append might be better here, array grows quickly -> slow
+            self.world_points_3d = np.concatenate((self.world_points_3d, points_3d), axis=0)
+            self.num_keyframe_points_3d = points_3d.shape[0]
+            return True
 
     def run(self, image: np.ndarray):
         '''
@@ -118,6 +130,9 @@ class VO():
 
         '''
 
+        # match threshold
+        thresh_matches = 80
+
         # set very first keyframe
         # todo second 'or' condition if new keyframe need to be initialized
         if self.keyframe is None:
@@ -126,25 +141,40 @@ class VO():
             self.iteration += 1
             return
 
-        # initialize first point cloud
+        # initialize first point cloud and set new keyframe
         if self.world_points_3d is None:
-            self.initialize_point_cloud(image=image)
+            if self.initialize_point_cloud(image=image, mode="init"):
+                self.keyframe = image
+                self.keyframe_features = self.extract_features(image=image, algorithm="sift")
             self.iteration += 1
             return
 
-        # continuous run process
-
-        # extract features
+        # extract features and find matches between self.query_features
+        # and self.world_points_3d[-self.num_keyframe_points_3d:, 3:] (CURRENT keyframe points)
         self.query_features = self.extract_features(image=image, algorithm="sift")
-
-        # match features
         matches = self.match_features(method="3d2d")
+
+        print(len(matches))
+        # check if enough matches can be produced,
+        # else reinit new keyframe and expand point cloud using new keyframe and old keyframe
+        if len(matches) < thresh_matches:
+            if self.initialize_point_cloud(image=image, mode="expand"):
+                self.keyframe = image
+                self.keyframe_features = self.extract_features(image=image, algorithm="sift")
+            self.iteration += 1
+            return
+
+        # estimate cam pose
+        pose = self.estimate_camera_pose(matches=matches)
+
+        self.poses.append(pose)
 
         a = 2
         self.iteration += 1
 
 
-    def match_features(self, method: str, descriptor_prev=None, num_matches_previous=None):
+
+    def match_features(self, method: str, descriptor_prev=None):
         '''
         Parameters
         ----------
@@ -176,9 +206,10 @@ class VO():
         if method == '2d2d':
             descriptor_prev = self.keyframe_features['descriptors']
         elif method == '3d2d':
-            # if num_matches_previous is None:
-            #     raise ValueError("Please set a valid number of matches to create. Value must be positive.")
-            descriptor_prev = self.world_points_3d[-num_matches_previous:, 3:]
+            if self.num_keyframe_points_3d is None:
+                raise ValueError("Please set a valid number of matches to create. Value must be positive.")
+            descriptor_prev = self.world_points_3d[-self.num_keyframe_points_3d:, 3:]
+            a = 2
         else:
             raise ValueError("Invalid retrieval method. Use '2d2d' or '3d2d'.")
 
@@ -186,7 +217,7 @@ class VO():
         matches = bf.match(self.query_features["descriptors"], descriptor_prev)
         return matches
 
-    def estimate_camera_pose(self, matches: List[cv2.DMatch]) -> int:
+    def estimate_camera_pose(self, matches: Tuple[cv2.DMatch]):
         # TODO: maybe find a way to avoid passing matches (huge list) as an
         # argument (make it member of the class?)
         '''
@@ -197,7 +228,7 @@ class VO():
         
         Parameters
         ----------
-            matches: List[cv2.DMatch]
+            matches: Tuple[cv2.DMatch]
                 Structure containning the matching information beween
                 self.query_features, and self.world_points_3d.
 
@@ -205,31 +236,36 @@ class VO():
         -------
             num_inliers: int
                 Number of inliers used by RANSAC to compute the camera pose.
+            todo. engelbracht: idea: just return the pose, its appended in run?
         '''
         # Retrieve matched 2D/3D points.
-        matches_array = np.array(
-            [(match.queryIdx, match.trainIdx) for match in matches])
-        object_points = \
-            self.world_points_3d[matches_array[:,1], 0:3]        # 3D pt (Nx3)
-        image_points = \
-            self.query_features["features"][matches_array[:,0]]  # 2D pt (Nx2)
+        matches_array = np.array([(match.queryIdx, match.trainIdx) for match in matches])
+        object_points = self.world_points_3d[matches_array[:,1], 0:3]       # 3D pt (Nx3)
+        # image_points = self.query_features["keypoints"][matches_array[:,0]]  # 2D pt (Nx2)
+        image_points = np.array([self.query_features['keypoints'][match.trainIdx].pt for match in matches])
+
         # Run PnP
         success, rvec_C_W, t_C_W, inliers = cv2.solvePnPRansac(
-            object_points, image_points.T,
+            object_points, image_points,
             cameraMatrix=self.K, distCoeffs=np.zeros((4,1)))
         if not success:
             raise RuntimeError("RANSAC is not able to fit the model")
+
         # Extract transformation matrix
         R_C_W, _ = cv2.Rodrigues(rvec_C_W)
-        t_C_W = t_C_W[:, 0]
+        # t_C_W = t_C_W[:, 0]
+
         # Add it to the list of poses
-        T_C_W = np.eye(4)
-        T_C_W[1:3, 1:3] = R_C_W
-        T_C_W[1:3, 4] = t_C_W
-        self.poses = np.append((self.poses, T_C_W[:,:,np.newaxis]), axis = 2)
+        # T_C_W = np.eye(4)
+        # T_C_W[1:3, 1:3] = R_C_W
+        # T_C_W[1:3, 4] = t_C_W
+        T_C_W = np.hstack([R_C_W, t_C_W])
+        # self.poses = np.append((self.poses, T_C_W[:,:,np.newaxis]), axis = 2)
         # return the number of points used to estimate the camera pose
-        return inliers.size()
-        
+        # self.poses =
+        # return inliers.size()
+        return T_C_W
+
     def triangulate_point_cloud(
             self, query_feature: Dict[tuple[cv2.Feature2D], np.ndarray], train_feature: Dict[tuple[cv2.Feature2D], np.ndarray],
             matches: tuple[cv2.DMatch]):
@@ -282,7 +318,7 @@ class VO():
                                second_img_descriptor))
 
         # Remove outliers and populate point cloud
-        feature_3d = feature_3d[np.where(inlier_mask[:,0] == 1)]
+        feature_3d = feature_3d[np.where(inlier_mask[:,0] == 1)].astype("float32")
 
         # if self.world_points_3d is None:
         #     world_points_3d = feature_3d

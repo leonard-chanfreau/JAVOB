@@ -18,7 +18,7 @@ if __name__ == '__main__':
     # vo.keyframe_features = vo.extract_features(first_frame)
 
     for idx, file in enumerate(image_files):
-        print(idx)
+        # print(idx)
         image = vo.read_image_(file=os.path.join(directory, file))
         vo.run(image=image)
 
