@@ -30,13 +30,13 @@ if __name__ == '__main__':
         # New call of VO class (we are working in relation to query image)
         vo.extract_features(image=query_img, algorithm='sift')
         query_features = vo.query_features.copy()
-        
+        vo.query_frame = query_img
         
         # 8pt
         if pt_cloud_exists is False:
             
             matches2d2d = vo.match_features("2d2d", descriptor_prev=prev_features["descriptors"])
-
+            
             first_img_pt = np.array([prev_features["keypoints"][match.trainIdx].pt for match in matches2d2d])
             second_img_pt = np.array([query_features["keypoints"][match.queryIdx].pt for match in matches2d2d])
 
@@ -82,11 +82,14 @@ if __name__ == '__main__':
                 vo.poses[0,:,:] = np.hstack((R,t))
                 pose_exists = True
 
-            # Visualize
+            # CV2 Visualize
             # Plot 2d2d matches
             img3 = cv2.drawMatches(query_img, query_features["keypoints"], prev_img, prev_features["keypoints"],
                                matches2d2d[:], None, flags=2) # displaying all matches
-
+            
+            # Our own visualizer
+            # vo.visualize(mode='all', matches=matches2d2d)
+            b=2
         else:
             
             num_previous_descriptors = 50 # (Hardcoding for testing), trying to match 50 of existing 3D points to query points
@@ -124,7 +127,13 @@ if __name__ == '__main__':
             
             # extract projectPoints output to get u,v. Can probably fix this with different datastructures?
             projected_3D_points = np.hstack((projected_3D_points[0][:,:,0], projected_3D_points[0][:,:,1])) 
+            
+            
+            # Our own visualizer
+            # vo.visualize(mode='all', matches=matches3d2d, world_points=True)
+            b=2
 
+            # CV2 visualizer
             # # NOTE/TODO fails, can't read projected_3D_points since not cv2.Keypoint dtype
             # img3 = cv2.drawMatches(query_img, recover_inlier_2d_points, 
             #                        prev_img, projected_3D_points,

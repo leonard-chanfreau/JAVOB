@@ -2,6 +2,7 @@ from typing import *
 import numpy as np
 import cv2
 import os
+import matplotlib.pyplot as plt
 
 class VO():
     
@@ -12,7 +13,9 @@ class VO():
         
         # Query
         self.query_features = {} # {cv2.features, cv2.desciptors} storing 2D feature (u,v) and its HoG descriptor. Called via {"features", "descriptors"}
-     
+
+        self.keyframe = None
+        self.query_frame = None
 
         # Database
         self.last_keyframe = {} # overwrite every time new keyframe is created. {cv2.features, cv2.desciptors, image index} 
@@ -152,54 +155,54 @@ class VO():
         # return the number of points used to estimate the camera pose
         return inliers.size()
         
-    def triangulate_point_cloud(
-            self, query_feature: np.NdArray, train_feature: np.NdArray,
-            matches: List[cv2.DMatch]):
-        # TODO: Maybe these arguments should be members of the class.
-        '''
-        Triangulate the camera pose and a point cloud using 8-pt algorithm and
-        RANSAC.\n
-        Populate the 3D point cloud and append the pose to the history of
-        camera poses (self.poses).
+    # def triangulate_point_cloud(
+    #         self, query_feature: np.NdArray, train_feature: np.NdArray,
+    #         matches: List[cv2.DMatch]):
+    #     # TODO: Maybe these arguments should be members of the class.
+    #     '''
+    #     Triangulate the camera pose and a point cloud using 8-pt algorithm and
+    #     RANSAC.\n
+    #     Populate the 3D point cloud and append the pose to the history of
+    #     camera poses (self.poses).
         
-        Parameters
-        ----------
-        query_feature: np.NdArray
-        train_feature: np.NdArray
-        matches: List[cv2.DMatch]
+    #     Parameters
+    #     ----------
+    #     query_feature: np.NdArray
+    #     train_feature: np.NdArray
+    #     matches: List[cv2.DMatch]
 
-        Returns
-        -------
+    #     Returns
+    #     -------
 
-        '''
-        # Retrieve matched 2D/2D points.
-        matches_array = np.array(
-            [(match.queryIdx, match.trainIdx) for match in matches])
-        first_img_pt = train_feature["features"][matches_array[:,1]]    # 2D pt (Nx2)
-        second_img_pt = query_feature["features"][matches_array[:,0]]   # 2D pt (Nx2)
-        # Compute essential matrix.
-        E, essential_inliers = cv2.findEssentialMat(
-            first_img_pt, second_img_pt,
-            cameraMatrix=self.K,
-            method=cv2.RANSAC, prob=0.99, threshold=1.0)
-        # Extract pose from it.
-        _, R_C_W, t_C_W, inlier_mask, triangulatedPoints = \
-            cv2.recoverPose(E, first_img_pt, second_img_pt,
-                            cameraMatrix=self.K,
-                            mask=essential_inliers)
-        # Create 3D feature concatenating normalized triangulated points and
-        # descriptors.
-        norm_triangulated_points = \
-            triangulatedPoints[:, 1:3] / triangulatedPoints[:, 4]
-        feature_3d = np.hstack(norm_triangulated_points,
-                               query_feature["descriptor"])
-        # Remove outliers and populate point cloud
-        feature_3d = feature_3d[inlier_mask[:,0].astype(np.bool)]
-        self.world_points_3d = \
-            np.vstack(self.world_points_3d, norm_triangulated_points)
-        # Append pose to history
-        self.poses = \
-            np.dstack(self.poses, np.vstack(R_C_W, t_C_W))
+    #     '''
+    #     # Retrieve matched 2D/2D points.
+    #     matches_array = np.array(
+    #         [(match.queryIdx, match.trainIdx) for match in matches])
+    #     first_img_pt = train_feature["features"][matches_array[:,1]]    # 2D pt (Nx2)
+    #     second_img_pt = query_feature["features"][matches_array[:,0]]   # 2D pt (Nx2)
+    #     # Compute essential matrix.
+    #     E, essential_inliers = cv2.findEssentialMat(
+    #         first_img_pt, second_img_pt,
+    #         cameraMatrix=self.K,
+    #         method=cv2.RANSAC, prob=0.99, threshold=1.0)
+    #     # Extract pose from it.
+    #     _, R_C_W, t_C_W, inlier_mask, triangulatedPoints = \
+    #         cv2.recoverPose(E, first_img_pt, second_img_pt,
+    #                         cameraMatrix=self.K,
+    #                         mask=essential_inliers)
+    #     # Create 3D feature concatenating normalized triangulated points and
+    #     # descriptors.
+    #     norm_triangulated_points = \
+    #         triangulatedPoints[:, 1:3] / triangulatedPoints[:, 4]
+    #     feature_3d = np.hstack(norm_triangulated_points,
+    #                            query_feature["descriptor"])
+    #     # Remove outliers and populate point cloud
+    #     feature_3d = feature_3d[inlier_mask[:,0].astype(np.bool)]
+    #     self.world_points_3d = \
+    #         np.vstack(self.world_points_3d, norm_triangulated_points)
+    #     # Append pose to history
+    #     self.poses = \
+    #         np.dstack(self.poses, np.vstack(R_C_W, t_C_W))
 
     def check_num_inliers(self):
         '''
@@ -209,6 +212,105 @@ class VO():
 
         '''
         pass
+
+    def visualize(self, mode: str, matches: Tuple[cv2.DMatch], project_points=False):
+        '''
+        Parameters
+        -------
+        mode: str
+            'all' is valid for now.
+
+            Maybe make a 'match_inliers' and '3d_projections' feature.
+            
+            Later break down into:
+                'matches' to view inlier feature matches overlaid on image
+                'visible3d' to view visible 3d points overlaid on image
+        matches: 
+        project_points (optional): bool
+            Default is False. If True, project all self.world_3d_points into 
+            the camera frame.
+            TODO: trim down number of 3D points to project into the scene each 
+            time this is called
+
+
+        Comments
+        -------
+        NOTE: vizualize() should be called after query pose is written. This is
+        so that when projecting 3D world points into the image, we use the
+        query image pose.
+
+        Poses are in world frame (first image frame).
+
+        Plot dashboard: (some of these are nice-to-have)
+            Image plots
+                Query image with points
+                    Which points? Display only features that were matched with 
+                    prev image or keyframe?
+            Local trajectory + 3D world points
+                Keep current pose at the center of graph
+            Global trajectory
+                Also ground truth if available.
+            Number of keypoints
+                World 3D points in frame?
+                    Others plot number of new keypoints, tracked keypoints, 
+                    and keypoint candidates on one plot
+
+        TODO  
+        Add ground truth argument later if we need
+        gt (optional): str
+                Path to config file 
+                TODO check format of ground truth
+        
+        Returns
+        -------
+        '''
+
+        # # Plot pose
+        # num_poses = len(self.poses)
+        # pose_figsize=(7, 8)
+        # _, ax = plt.subplots(figsize=pose_figsize)
+        
+        # for i, pose in enumerate(self.poses):
+        #     # Extract translation
+        #     xy = pose[:,-1]
+
+        #     # Ground plane in camera xz plane, 3D points in world frame
+
+        # Quick visualizer for query frame with features
+        if mode == 'all':
+            # TODO ideas for later: irving: make subplots for "all"
+            # upper image displays inlier/outlier matched features
+            
+            # For now, combined into one plot.
+            # im = plt.imread(self.query_frame) # if image.png
+            im = self.query_frame
+            implot = plt.imshow(im)
+
+            # Match data for overlay
+            # features_matched is 2D numpy array
+            features_matched = np.array([self.query_features['keypoints'][match.queryIdx].pt for match in matches]) # does not show
+            # features_all is 1D numpy array
+            features_all = np.asarray(cv2.KeyPoint_convert(self.query_features['keypoints']))
+            
+            # 3d data for overlay. Optional param.
+            if project_points is True:
+                # project all point cloud features into frame
+                # PLOT AS EMPTY CIRCLE to not occlude
+                # Point to self.world_3d_points ((npoints x 131) numpy array)
+
+                # projected_points = cv2.projectPoints()
+                pass
+        
+            # Plot all features in red, matched features in green
+            plt.scatter(x=features_all[:,0], y=features_all[:,1], c='r', s=9, marker='x')
+            plt.scatter(x=features_matched[:,0], y=features_matched[:,1], c='lime', s=9, marker='x')
+
+            # Plot
+            
+
+            plt.show()
+        else:
+            raise ValueError("Please input a valid mode for. See visualize() definition.")
 
 
 
