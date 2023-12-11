@@ -8,12 +8,13 @@ class VO():
     def __init__(self, calib_file: str):
 
         self.K = self.read_calib_file_(path=calib_file)
-        self.num_features = 400
+        self.num_features = 1000
         
         # Query
         self.query_features = {} # {cv2.features, cv2.desciptors} storing 2D feature (u,v) and its HoG descriptor. Called via {"features", "descriptors"}
 
         self.keyframe = None
+        self.query_frame = None
 
         # Database
         self.keyframe_features = {} # overwrite every time new keyframe is created. {cv2.features, cv2.desciptors}
@@ -97,7 +98,7 @@ class VO():
 
         if mode == "init":
             # todo hyperparam dict
-            thresh = 0.1
+            thresh = 0.10
 
             # get Z coord and average depth and baseline
             depth = points_3d[:,2]
@@ -131,10 +132,9 @@ class VO():
         '''
 
         # match threshold
-        thresh_matches = 80
+        thresh_matches = 30
 
         # set very first keyframe
-        # todo second 'or' condition if new keyframe need to be initialized
         if self.keyframe is None:
             self.keyframe = image
             self.keyframe_features = self.extract_features(image=image, algorithm="sift")
@@ -149,12 +149,13 @@ class VO():
             self.iteration += 1
             return
 
+        # continuous run
         # extract features and find matches between self.query_features
         # and self.world_points_3d[-self.num_keyframe_points_3d:, 3:] (CURRENT keyframe points)
+        self.query_frame = image
         self.query_features = self.extract_features(image=image, algorithm="sift")
         matches = self.match_features(method="3d2d")
 
-        print(len(matches))
         # check if enough matches can be produced,
         # else reinit new keyframe and expand point cloud using new keyframe and old keyframe
         if len(matches) < thresh_matches:
