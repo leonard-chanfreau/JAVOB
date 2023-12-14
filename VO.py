@@ -143,6 +143,7 @@ class VO():
 
         # initialize first point cloud and set new keyframe
         if self.world_points_3d is None:
+            self.query_frame = image
             if self.initialize_point_cloud(image=image, mode="init"):
                 self.keyframe = image
                 self.keyframe_features = self.extract_features(image=image, algorithm="sift")
@@ -166,7 +167,9 @@ class VO():
             return
 
         # estimate cam pose
-        pose = self.estimate_camera_pose(matches=matches)
+        pose, inliers = self.estimate_camera_pose(matches=matches)
+        
+        print(f"#Inliers : {inliers}")
 
         self.poses.append(pose)
 
@@ -243,7 +246,7 @@ class VO():
         matches_array = np.array([(match.queryIdx, match.trainIdx) for match in matches])
         object_points = self.world_points_3d[matches_array[:,1], 0:3]       # 3D pt (Nx3)
         # image_points = self.query_features["keypoints"][matches_array[:,0]]  # 2D pt (Nx2)
-        image_points = np.array([self.query_features['keypoints'][match.trainIdx].pt for match in matches])
+        image_points = np.array([self.query_features['keypoints'][match.queryIdx].pt for match in matches])
 
         # Run PnP
         success, rvec_C_W, t_C_W, inliers = cv2.solvePnPRansac(
@@ -265,7 +268,7 @@ class VO():
         # return the number of points used to estimate the camera pose
         # self.poses =
         # return inliers.size()
-        return T_C_W
+        return T_C_W, inliers.size
 
     def triangulate_point_cloud(
             self, query_feature: Dict[tuple[cv2.Feature2D], np.ndarray], train_feature: Dict[tuple[cv2.Feature2D], np.ndarray],
