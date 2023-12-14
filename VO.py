@@ -1,4 +1,5 @@
 from typing import *
+from matplotlib import pyplot as plt
 import numpy as np
 import cv2
 import os
@@ -14,6 +15,7 @@ class VO():
         self.query_features = {} # {cv2.features, cv2.desciptors} storing 2D feature (u,v) and its HoG descriptor. Called via {"features", "descriptors"}
 
         self.keyframe = None
+        self.keyframe_pos = None
         self.query_frame = None
 
         # Database
@@ -109,6 +111,7 @@ class VO():
             if baseline/average_depth > thresh:
                 self.world_points_3d = points_3d
                 self.num_keyframe_points_3d = points_3d.shape[0]
+                self.poses.append(pose)
                 return True
             else:
                 return False
@@ -117,6 +120,7 @@ class VO():
             # todo: i would not concatenate, list append might be better here, array grows quickly -> slow
             self.world_points_3d = np.concatenate((self.world_points_3d, points_3d), axis=0)
             self.num_keyframe_points_3d = points_3d.shape[0]
+            self.poses.append(pose)
             return True
 
     def run(self, image: np.ndarray):
@@ -146,6 +150,7 @@ class VO():
             self.query_frame = image
             if self.initialize_point_cloud(image=image, mode="init"):
                 self.keyframe = image
+                self.keyframe_pos = self.poses[-1]
                 self.keyframe_features = self.extract_features(image=image, algorithm="sift")
             self.iteration += 1
             return
@@ -159,9 +164,11 @@ class VO():
 
         # check if enough matches can be produced,
         # else reinit new keyframe and expand point cloud using new keyframe and old keyframe
+        print(len(matches))
         if len(matches) < thresh_matches:
             if self.initialize_point_cloud(image=image, mode="expand"):
                 self.keyframe = image
+                self.keyframe_pos = self.poses[-1]
                 self.keyframe_features = self.extract_features(image=image, algorithm="sift")
             self.iteration += 1
             return
@@ -219,6 +226,15 @@ class VO():
 
         bf = cv2.BFMatcher(normType=cv2.NORM_L1, crossCheck=True)
         matches = bf.match(self.query_features["descriptors"], descriptor_prev)
+        matches = sorted(matches, key = lambda x:x.distance)
+        # matched_image = cv2.drawMatches(
+        #     self.keyframe, self.keyframe_features["keypoints"],
+        #     self.query_frame, self.query_features["keypoints"],
+        #     matches[:10],
+        #     None,flags=cv2.DrawMatchesFlags_NOT_DRAW_SINGLE_POINTS)
+
+        # plt.imshow(matched_image)
+        # plt.show()
         return matches
 
     def estimate_camera_pose(self, matches: Tuple[cv2.DMatch]):
@@ -248,10 +264,37 @@ class VO():
         # image_points = self.query_features["keypoints"][matches_array[:,0]]  # 2D pt (Nx2)
         image_points = np.array([self.query_features['keypoints'][match.queryIdx].pt for match in matches])
 
+        # matched_image = cv2.drawMatches(
+        #     self.keyframe, self.keyframe_features["keypoints"],
+        #     self.query_frame, self.query_features["keypoints"],
+        #     matches[:10],
+        #     None,flags=cv2.DrawMatchesFlags_NOT_DRAW_SINGLE_POINTS)
+
+        # plt.imshow(matched_image)
+        # plt.show()
+
         # Run PnP
         success, rvec_C_W, t_C_W, inliers = cv2.solvePnPRansac(
             object_points, image_points,
             cameraMatrix=self.K, distCoeffs=np.zeros((4,1)))
+        
+        R = self.keyframe_pos[:, :3]
+        t = self.keyframe_pos[:, 3].reshape(3, 1)
+        projected_points, _ = cv2.projectPoints(object_points, R, t, self.K, None)
+        projected_points = np.squeeze(projected_points)
+        
+        matched_image = cv2.drawMatches(
+            self.query_frame, np.array([self.query_features["keypoints"][match.queryIdx] for match in matches]),
+            self.keyframe, np.array([cv2.KeyPoint(projected_points[i,0], projected_points[i,1], 5) for i in range(projected_points.shape[0])]),
+            [cv2.DMatch(i[0], i[0], 0) for i in inliers][:10],
+            None,
+            matchColor=(0, 255, 0),  # Green color for inliers
+            singlePointColor=(255, 0, 0)  # Blue color for keypoints
+        )
+
+        plt.imshow(matched_image)
+        plt.show()
+        
         if not success:
             raise RuntimeError("RANSAC is not able to fit the model")
 
@@ -290,6 +333,7 @@ class VO():
         -------
 
         '''
+        print("Triangulating point cloud...")
         distance_thresh = 50
         # Retrieve matched 2D/2D points.
         matches_array = np.array(
