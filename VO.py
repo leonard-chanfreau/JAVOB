@@ -103,14 +103,12 @@ class VO():
         elif method == '3d2d':
             if num_matches_previous is None:
                 raise ValueError("Please set a valid number of matches to create. Value must be positive.")
-            # descriptor_prev = self.world_points_3d[-num_matches_previous:, 3:]
-            descriptor_prev = self.world_points_3d[:, 3:]
+            descriptor_prev = self.world_points_3d[-num_matches_previous:, 3:]
         else:
             raise ValueError("Invalid retrieval method. Use '2d2d' or '3d2d'.")
 
         bf = cv2.BFMatcher(normType=cv2.NORM_L1, crossCheck=True)
         matches = bf.match(self.query_features["descriptors"], descriptor_prev)
-        # matches = sorted(matches, key = lambda x:x.distance)
         return matches
 
     def estimate_camera_pose(self, matches: List[cv2.DMatch]) -> int:
@@ -320,14 +318,12 @@ class VO():
                 raise ValueError("Please input match correspondances \
                                  (Tuple[cv2.DMatch]) when using 'match' mode.")
             
-            im = self.query_frame # plt.imread(self.query_frame) if .png
+            im = self.query_frame
             plt.clf() # clears last "features_all" points
             implot = plt.imshow(im)
             padding = 50 # whitespace padding when visualizing data
 
-            # features_matched is 2D numpy array
-            features_matched = np.array([self.query_features['keypoints'][match.queryIdx].pt for match in matches]) # does not show
-            # features_all is 1D numpy array
+            features_matched = np.array([self.query_features['keypoints'][match.queryIdx].pt for match in matches])
             features_all = np.asarray(cv2.KeyPoint_convert(self.query_features['keypoints']))
             
             # All features in red, matched features in green
@@ -361,7 +357,7 @@ class VO():
                 #             marker='x', s=20, edgecolors='fuchsia')
                 # # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
             
-            # Visualize image with some whitespace
+            # Visualize image with whitespace padding
             plt.xlim(-padding, im.shape[1] + padding)
             plt.ylim(im.shape[0] + padding, -padding)
             plt.show()
