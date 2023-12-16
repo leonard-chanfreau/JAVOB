@@ -157,54 +157,54 @@ class VO():
         # return the number of points used to estimate the camera pose
         return inliers.size()
         
-    # def triangulate_point_cloud(
-    #         self, query_feature: np.NdArray, train_feature: np.NdArray,
-    #         matches: List[cv2.DMatch]):
-    #     # TODO: Maybe these arguments should be members of the class.
-    #     '''
-    #     Triangulate the camera pose and a point cloud using 8-pt algorithm and
-    #     RANSAC.\n
-    #     Populate the 3D point cloud and append the pose to the history of
-    #     camera poses (self.poses).
+    def triangulate_point_cloud(
+            self, query_feature: np.NdArray, train_feature: np.NdArray,
+            matches: List[cv2.DMatch]):
+        # TODO: Maybe these arguments should be members of the class.
+        '''
+        Triangulate the camera pose and a point cloud using 8-pt algorithm and
+        RANSAC.\n
+        Populate the 3D point cloud and append the pose to the history of
+        camera poses (self.poses).
         
-    #     Parameters
-    #     ----------
-    #     query_feature: np.NdArray
-    #     train_feature: np.NdArray
-    #     matches: List[cv2.DMatch]
+        Parameters
+        ----------
+        query_feature: np.NdArray
+        train_feature: np.NdArray
+        matches: List[cv2.DMatch]
 
-    #     Returns
-    #     -------
+        Returns
+        -------
 
-    #     '''
-    #     # Retrieve matched 2D/2D points.
-    #     matches_array = np.array(
-    #         [(match.queryIdx, match.trainIdx) for match in matches])
-    #     first_img_pt = train_feature["features"][matches_array[:,1]]    # 2D pt (Nx2)
-    #     second_img_pt = query_feature["features"][matches_array[:,0]]   # 2D pt (Nx2)
-    #     # Compute essential matrix.
-    #     E, essential_inliers = cv2.findEssentialMat(
-    #         first_img_pt, second_img_pt,
-    #         cameraMatrix=self.K,
-    #         method=cv2.RANSAC, prob=0.99, threshold=1.0)
-    #     # Extract pose from it.
-    #     _, R_C_W, t_C_W, inlier_mask, triangulatedPoints = \
-    #         cv2.recoverPose(E, first_img_pt, second_img_pt,
-    #                         cameraMatrix=self.K,
-    #                         mask=essential_inliers)
-    #     # Create 3D feature concatenating normalized triangulated points and
-    #     # descriptors.
-    #     norm_triangulated_points = \
-    #         triangulatedPoints[:, 1:3] / triangulatedPoints[:, 4]
-    #     feature_3d = np.hstack(norm_triangulated_points,
-    #                            query_feature["descriptor"])
-    #     # Remove outliers and populate point cloud
-    #     feature_3d = feature_3d[inlier_mask[:,0].astype(np.bool)]
-    #     self.world_points_3d = \
-    #         np.vstack(self.world_points_3d, norm_triangulated_points)
-    #     # Append pose to history
-    #     self.poses = \
-    #         np.dstack(self.poses, np.vstack(R_C_W, t_C_W))
+        '''
+        # Retrieve matched 2D/2D points.
+        matches_array = np.array(
+            [(match.queryIdx, match.trainIdx) for match in matches])
+        first_img_pt = train_feature["features"][matches_array[:,1]]    # 2D pt (Nx2)
+        second_img_pt = query_feature["features"][matches_array[:,0]]   # 2D pt (Nx2)
+        # Compute essential matrix.
+        E, essential_inliers = cv2.findEssentialMat(
+            first_img_pt, second_img_pt,
+            cameraMatrix=self.K,
+            method=cv2.RANSAC, prob=0.99, threshold=1.0)
+        # Extract pose from it.
+        _, R_C_W, t_C_W, inlier_mask, triangulatedPoints = \
+            cv2.recoverPose(E, first_img_pt, second_img_pt,
+                            cameraMatrix=self.K,
+                            mask=essential_inliers)
+        # Create 3D feature concatenating normalized triangulated points and
+        # descriptors.
+        norm_triangulated_points = \
+            triangulatedPoints[:, 1:3] / triangulatedPoints[:, 4]
+        feature_3d = np.hstack(norm_triangulated_points,
+                               query_feature["descriptor"])
+        # Remove outliers and populate point cloud
+        feature_3d = feature_3d[inlier_mask[:,0].astype(np.bool)]
+        self.world_points_3d = \
+            np.vstack(self.world_points_3d, norm_triangulated_points)
+        # Append pose to history
+        self.poses = \
+            np.dstack(self.poses, np.vstack(R_C_W, t_C_W))
 
     def check_num_inliers(self):
         '''
