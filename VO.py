@@ -322,30 +322,31 @@ class VO():
                                  (Tuple[cv2.DMatch]) when using 'match' mode.")
             
             im = self.query_frame # plt.imread(self.query_frame) if .png
+            plt.clf() # clears last "features_all" points
             implot = plt.imshow(im)
+            padding = 50 # whitespace padding when visualizing data
 
-            # Match data for overlay
             # features_matched is 2D numpy array
             features_matched = np.array([self.query_features['keypoints'][match.queryIdx].pt for match in matches]) # does not show
             # features_all is 1D numpy array
             features_all = np.asarray(cv2.KeyPoint_convert(self.query_features['keypoints']))
             
-            # Plot all features in red, matched features in green
+            # All features in red, matched features in green
             plt.scatter(x=features_all[:,0], y=features_all[:,1], c='r', s=9, marker='x')
             plt.scatter(x=features_matched[:,0], y=features_matched[:,1], c='lime', s=9, marker='x')
 
-            # 3d data for overlay. Optional param.
+            # Optional param. 
+            # Projects ALL point cloud features as cyan circle into frame
             if project_points is True:
-                # project ALL point cloud features into frame
-                # PLOT AS EMPTY CIRCLE to not occlude
-                # Point to self.world_3d_points ((npoints x 131) numpy array)
-
                 # Our own reprojectPoints() function works
-                points = self.reprojectPoints(self.world_points_3d[:,:3], self.poses[:,:,-1], self.K)
-                
-                # TODO reject points outside of image size
-                # points = points[xmin,xmax, ymin,ymax]
-                plt.scatter(x=points[:,0], y=points[:,1], s=20, facecolors='none', edgecolors='cyan')
+                points = self.reprojectPoints(self.world_points_3d[:,:3], 
+                                              self.poses[:,:,-1], 
+                                              self.K)
+                plt.scatter(x=points[:,0], 
+                            y=points[:,1], 
+                            s=20, 
+                            facecolors='none', 
+                            edgecolors='cyan')
 
                 # # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
                 # # Leonard's implementation. 
@@ -360,7 +361,13 @@ class VO():
                 # plt.scatter(x=projected_points[:,0], y=projected_points[:,1], \
                 #             marker='x', s=20, edgecolors='fuchsia')
                 # # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+            
+            # Visualize image with some whitespace
+            plt.xlim(-padding, im.shape[1] + padding)
+            plt.ylim(im.shape[0] + padding, -padding)
             plt.show()
+            plt.pause(0.01)
+            
         else:
             raise ValueError("Please input a valid mode for. See visualize() definition.")
 
