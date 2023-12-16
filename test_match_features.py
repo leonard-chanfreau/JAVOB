@@ -87,7 +87,7 @@ if __name__ == '__main__':
             #                    matches2d2d[:], None, flags=2) # displaying all matches
             
             # Our own visualizer
-            # vo.visualize(mode='match', matches=matches2d2d)
+            vo.visualize(mode='match', matches=matches2d2d)
 
         else:
             
@@ -130,8 +130,6 @@ if __name__ == '__main__':
             # # extract projectPoints output to get u,v. Can probably fix this with different datastructures?
             # projected_3D_points = np.hstack((projected_3D_points[0][:,:,0], projected_3D_points[0][:,:,1])) 
             
-            if vo.poses.shape[2] == 2:
-                b=2
             # Our own visualizer
             vo.visualize(mode='match', matches=matches3d2d, project_points=True)
             b=2

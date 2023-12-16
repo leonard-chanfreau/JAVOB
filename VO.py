@@ -244,7 +244,6 @@ class VO():
                 - Must provide matches: Tuple[cv2.DMatch].
                 - Setting project_points=True allowed to visualize world 3D point 
                 projections in camera
-            'mask' (TODO? maybe helpful) feature to visualize masks.
             
         matches: Tuple[cv2.DMatch]
             - Required for 'match' mode. 
@@ -261,13 +260,15 @@ class VO():
 
         Comments
         -------
-        NOTE: vizualize() should be called after query pose is written. This is
+        NOTE: vizualize() should be called AFTER query pose is written. This is
         so that when projecting 3D world points into the image, we use the
         query image pose.
 
-        Poses are in world frame (first image frame).
+        Poses are in world frame (first image frame). (TODO: agree on this)
 
-        Plot dashboard: (some of these are nice-to-have)
+        NOTE for future development
+        - 'mask' mode (maybe helpful to visualize specific masks)
+        - Plot dashboard: (some of these are nice-to-have)
             Image plots
                 Query image with points
                     Which points? Display only features that were matched with 
@@ -280,13 +281,11 @@ class VO():
                 World 3D points in frame?
                     Others plot number of new keypoints, tracked keypoints, 
                     and keypoint candidates on one plot
-
-        TODO
         - Make dashboard/subplots
         - Add ground truth argument later if we need
             gt (optional): str
                     Path to config file 
-                    TODO check format of ground truth
+                    (check format of ground truth)
         
         Returns
         -------
