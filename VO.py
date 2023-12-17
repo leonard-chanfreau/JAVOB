@@ -2,6 +2,7 @@ from typing import *
 import numpy as np
 import cv2
 import os
+import matplotlib.pyplot as plt
 
 class VO():
     
@@ -12,7 +13,9 @@ class VO():
         
         # Query
         self.query_features = {} # {cv2.features, cv2.desciptors} storing 2D feature (u,v) and its HoG descriptor. Called via {"features", "descriptors"}
-     
+
+        self.keyframe = None
+        self.query_frame = None
 
         # Database
         self.last_keyframe = {} # overwrite every time new keyframe is created. {cv2.features, cv2.desciptors, image index} 
@@ -209,6 +212,159 @@ class VO():
 
         '''
         pass
+
+    def reprojectPoints(self, P, M, K):
+        '''
+        Reproject 3D points given a projection matrix. From ex02 (PnP)\n
+        
+        Parameters
+        ----------
+            P: [N x 3] 
+                Coordinates of the 3d points in the world frame
+            M: [3 x 4] projection matrix
+            K: [3 x 3] camera matrix
+
+        Returns
+        -------
+            [n x 2] image coordinates of the reprojected points
+        '''
+        p_homo = (K @ M @ np.r_[P.T, np.ones((1, P.shape[0]))]).T
+        return p_homo[:,:2]/p_homo[:,2,np.newaxis]
+
+    def visualize(self, mode: str, matches=None, project_points=False):
+        '''
+        Parameters
+        -------
+        mode: str
+            'match': 
+                - Visualizes the query image inlier feature 
+                matches overlaid on image. 
+                - Must provide matches: Tuple[cv2.DMatch].
+                - Setting project_points=True allowed to visualize world 3D point 
+                projections in camera
+            
+        matches: Tuple[cv2.DMatch]
+            - Required for 'match' mode. 
+            - List of correspondances between. 
+            vizualize() only reads the queryIdx of the correspondances in order
+            to determine u,v locations for inliers.
+
+        project_points (optional): bool
+            Default is False. If True, project all self.world_3d_points into 
+            the camera frame.
+            TODO: trim down number of 3D points to project into the scene each 
+            time this is called
+
+
+        Comments
+        -------
+        NOTE: vizualize() should be called AFTER query pose is written. This is
+        so that when projecting 3D world points into the image, we use the
+        query image pose.
+
+        Poses are in world frame (first image frame). (TODO: agree on this)
+
+        NOTE for future development
+        - 'mask' mode (maybe helpful to visualize specific masks)
+        - Plot dashboard: (some of these are nice-to-have)
+            Image plots
+                Query image with points
+                    Which points? Display only features that were matched with 
+                    prev image or keyframe?
+            Local trajectory + 3D world points
+                Keep current pose at the center of graph
+            Global trajectory
+                Also ground truth if available.
+            Number of keypoints
+                World 3D points in frame?
+                    Others plot number of new keypoints, tracked keypoints, 
+                    and keypoint candidates on one plot
+        - Make dashboard/subplots
+        - Add ground truth argument later if we need
+            gt (optional): str
+                    Path to config file 
+                    (check format of ground truth)
+        
+        Returns
+        -------
+        '''
+
+        # # Plot pose
+        # num_poses = len(self.poses)
+        # pose_figsize=(7, 8)
+        # _, ax = plt.subplots(figsize=pose_figsize)
+        
+        # for i, pose in enumerate(self.poses):
+        #     # Extract translation
+        #     xy = pose[:,-1]
+
+        #     # Ground plane in camera xz plane, 3D points in world frame
+
+        # Alternative Poses code (come back to this)
+        # ground_truth = np.zeros((len(poses), 3, 4))
+        # for i in range(len(poses)):
+        #     ground_truth[i] = np.array(poses.iloc[i]).reshape((3, 4))
+        # # matplotlib widget
+        # fig = plt.figure(figsize=(7,6))
+        # traj = fig.add_subplot(111, projection='3d')
+        # traj.plot(ground_truth[:,:,3][:,0], ground_truth[:,:,3][:,1], ground_truth[:,:,3][:,2])
+        # traj.set_xlabel('x')
+        # traj.set_ylabel('y')
+        # traj.set_zlabel('z')
+
+        # Quick visualizer for query frame with features
+        if mode == 'match':
+            if matches is None:
+                raise ValueError("Please input match correspondances \
+                                 (Tuple[cv2.DMatch]) when using 'match' mode.")
+            
+            im = self.query_frame
+            plt.clf() # clears last "features_all" points
+            implot = plt.imshow(im)
+            padding = 50 # whitespace padding when visualizing data
+
+            features_matched = np.array([self.query_features['keypoints'][match.queryIdx].pt for match in matches])
+            features_all = np.asarray(cv2.KeyPoint_convert(self.query_features['keypoints']))
+            
+            # All features in red, matched features in green
+            plt.scatter(x=features_all[:,0], y=features_all[:,1], c='r', s=9, marker='x')
+            plt.scatter(x=features_matched[:,0], y=features_matched[:,1], c='lime', s=9, marker='x')
+
+            # Optional param. 
+            # Projects ALL point cloud features as cyan circle into frame
+            if project_points is True:
+                # Our own reprojectPoints() function works
+                points = self.reprojectPoints(self.world_points_3d[:,:3], 
+                                              self.poses[:,:,-1], 
+                                              self.K)
+                plt.scatter(x=points[:,0], 
+                            y=points[:,1], 
+                            s=20, 
+                            facecolors='none', 
+                            edgecolors='cyan')
+
+                # # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+                # # Leonard's implementation. 
+                # # Still fails, projected_points returns NaN
+                # projected_points, _ = cv2.projectPoints(\
+                #     objectPoints=self.world_points_3d[:,:3].copy(), 
+                #     rvec=self.poses[:,:3,-1], 
+                #     tvec=self.poses[:,-1,-1], 
+                #     cameraMatrix=self.K,
+                #     distCoeffs=np.empty((1,4)))
+                # projected_points = np.squeeze(projected_points)
+                # plt.scatter(x=projected_points[:,0], y=projected_points[:,1], \
+                #             marker='x', s=20, edgecolors='fuchsia')
+                # # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+            
+            # Visualize image with whitespace padding
+            plt.xlim(-padding, im.shape[1] + padding)
+            plt.ylim(im.shape[0] + padding, -padding)
+            plt.show()
+            plt.pause(0.01)
+            
+        else:
+            raise ValueError("Please input a valid mode for. See visualize() definition.")
 
 
 
