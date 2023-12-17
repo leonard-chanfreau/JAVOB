@@ -12,14 +12,15 @@ class VO():
         self.num_features = 1000
         
         # Query
-        self.query_features = {} # {cv2.features, cv2.desciptors} storing 2D feature (u,v) and its HoG descriptor. Called via {"features", "descriptors"}
+        self.query_features = {} # {cv2.features, cv2.desciptors} storing 2D feature (u,v) and its HoG descriptor. Called via {"keypoints", "descriptors"}
 
         self.keyframe = None
+        self.keyframe_pos = None
         self.query_frame = None
 
         # Database
         self.keyframe_features = {} # overwrite every time new keyframe is created. {cv2.features, cv2.desciptors}
-                                # storing 2D feature (u,v) and its HoG descriptor. Called via {"features", "descriptors"}
+                                # storing 2D feature (u,v) and its HoG descriptor. Called via {"keypoints", "descriptors"}
         self.world_points_3d = None # np.ndarray(npoints x 131), where [:,:3] is the [x,y,z] world coordinate and [:,3:] is the 128 descriptor
                                 # dynamic storage of triangulated 3D points in world frame and their descriptors (npoints x 128 np.ndarray)
         self.num_keyframe_points_3d = None
@@ -70,7 +71,7 @@ class VO():
         return {"keypoints": keypoints, "descriptors": descriptors}
         #TODO: store query image descriptors in self.world_points_3d ---> THIS MAY GO IN TRIANGULATE() function
 
-    def initialize_point_cloud(self, image: np.ndarray, mode: str = "init"):
+    def initialize_point_cloud(self, image: np.ndarray):
         """
         initialize point cloud if depth uncertainty is below threshold (i.e. frames are sufficiently far apart)
 
@@ -84,9 +85,6 @@ class VO():
 
         """
 
-        if mode not in ["init", "expand"]:
-            raise ValueError("Invalid mode. Use 'init' or 'expand'.")
-
         # extract and set query features
         self.query_features = self.extract_features(image=image)
 
@@ -95,30 +93,23 @@ class VO():
 
         # initialize preliminary point cloud
         # todo remove self.... as args?
-        pose, points_3d = self.triangulate_point_cloud(query_feature=self.query_features, train_feature=self.keyframe_features, matches=matches)
+        pose, points_3d = self.compute_pose_and_3D_pts(query_feature=self.query_features, train_feature=self.keyframe_features, matches=matches)
 
-        if mode == "init":
-            # todo hyperparam dict
-            thresh = 0.10
+        # todo hyperparam dict
+        thresh = 0.10
 
-            # get Z coord and average depth and baseline
-            depth = points_3d[:,2]
-            average_depth = np.mean(depth)
-            baseline = np.linalg.norm(pose[:,-1])
+        # get Z coord and average depth and baseline
+        depth = points_3d[:,2]
+        average_depth = np.mean(depth)
+        baseline = np.linalg.norm(pose[:,-1])
 
-            # check average depth criterion
-            if baseline/average_depth > thresh:
-                self.world_points_3d = points_3d
-                self.num_keyframe_points_3d = points_3d.shape[0]
-                return True
-            else:
-                return False
-
-        if mode == "expand":
-            # todo: i would not concatenate, list append might be better here, array grows quickly -> slow
-            self.world_points_3d = np.concatenate((self.world_points_3d, points_3d), axis=0)
+        # check average depth criterion
+        if baseline/average_depth > thresh:
+            self.world_points_3d = points_3d
             self.num_keyframe_points_3d = points_3d.shape[0]
             return True
+        else:
+            return False
 
     def run(self, image: np.ndarray):
         '''
@@ -133,7 +124,7 @@ class VO():
         '''
 
         # match threshold
-        thresh_matches = 30
+        thresh_inliers = 30
 
         # set very first keyframe
         if self.keyframe is None:
@@ -145,8 +136,9 @@ class VO():
         # initialize first point cloud and set new keyframe
         if self.world_points_3d is None:
             self.query_frame = image
-            if self.initialize_point_cloud(image=image, mode="init"):
+            if self.initialize_point_cloud(image=image):
                 self.keyframe = image
+                self.keyframe_pos = self.poses[-1]
                 self.keyframe_features = self.extract_features(image=image, algorithm="sift")
             self.iteration += 1
             return
@@ -158,24 +150,22 @@ class VO():
         self.query_features = self.extract_features(image=image, algorithm="sift")
         matches = self.match_features(method="3d2d")
 
-        # check if enough matches can be produced,
-        # else reinit new keyframe and expand point cloud using new keyframe and old keyframe
-        if len(matches) < thresh_matches:
-            if self.initialize_point_cloud(image=image, mode="expand"):
-                self.keyframe = image
-                self.keyframe_features = self.extract_features(image=image, algorithm="sift")
-            self.iteration += 1
-            return
-
         # estimate cam pose
-        pose, inliers = self.estimate_camera_pose(matches=matches)
-        
-        print(f"#Inliers : {inliers}")
-
+        pose, num_inliers = self.estimate_camera_pose(matches=matches)
         self.poses.append(pose)
-
-        a = 2
+        
+        print(f"#Inliers : {num_inliers}")
         self.iteration += 1
+
+        # Check if enough inliers are found,
+        # else reinit new keyframe and expand point cloud using new keyframe and old keyframe
+        if num_inliers < thresh_inliers: # TODO: Maybe rather a percentage of point cloud
+            matches = self.match_features("2d2d")
+            self.triangulate_new_points(pose, matches)   #TODO: Maybe a wrapper as initialize point cloud that checks if camera are distant enough
+            self.keyframe = image
+            self.keyframe_pos = self.poses[-1]
+            self.keyframe_features = self.query_features
+            return
 
 
 
@@ -253,6 +243,25 @@ class VO():
         success, rvec_C_W, t_C_W, inliers = cv2.solvePnPRansac(
             object_points, image_points,
             cameraMatrix=self.K, distCoeffs=np.zeros((4,1)))
+        
+        R = self.keyframe_pos[:, :3]
+        t = self.keyframe_pos[:, 3].reshape(3, 1)
+        projected_points, _ = cv2.projectPoints(object_points, R, t, self.K, None)
+        projected_points = np.squeeze(projected_points)
+        
+        if self.iteration > 26:
+            matched_image = cv2.drawMatches(
+                self.query_frame, np.array([self.query_features["keypoints"][match.queryIdx] for match in matches]),
+                self.keyframe, np.array([cv2.KeyPoint(projected_points[i,0], projected_points[i,1], 5) for i in range(projected_points.shape[0])]),
+                [cv2.DMatch(i[0], i[0], 0) for i in inliers][:10],
+                None,
+                matchColor=(0, 255, 0),  # Green color for inliers
+                singlePointColor=(255, 0, 0)  # Blue color for keypoints
+            )
+
+            plt.imshow(matched_image)
+            plt.show()
+        
         if not success:
             raise RuntimeError("RANSAC is not able to fit the model")
 
@@ -271,13 +280,13 @@ class VO():
         # return inliers.size()
         return T_C_W, inliers.size
 
-    def triangulate_point_cloud(
+    def compute_pose_and_3D_pts(
             self, query_feature: Dict[tuple[cv2.Feature2D], np.ndarray], train_feature: Dict[tuple[cv2.Feature2D], np.ndarray],
             matches: tuple[cv2.DMatch]):
         # TODO: Maybe these arguments should be members of the class.
         '''
-        Triangulate the camera pose and a point cloud using 8-pt algorithm and
-        RANSAC.\n
+        Compute the camera pose and construct a point cloud using 8-pt algorithm
+        and RANSAC (SFM).\n
         Populate the 3D point cloud and append the pose to the history of
         camera poses (self.poses).
         
@@ -295,8 +304,6 @@ class VO():
         # Retrieve matched 2D/2D points.
         matches_array = np.array(
             [(match.queryIdx, match.trainIdx) for match in matches])
-        # first_img_pt = np.expand_dims(np.array(train_feature["keypoints"])[matches_array[:,1]],1)  # 2D pt (Nx2)
-        # second_img_pt = np.expand_dims(np.array(query_feature["keypoints"])[matches_array[:,0]],1)  # 2D pt (Nx2)
         first_img_pt = np.array([train_feature['keypoints'][match.trainIdx].pt for match in matches])
         second_img_pt = np.array([query_feature['keypoints'][match.queryIdx].pt for match in matches])
         second_img_descriptor = query_feature["descriptors"][matches_array[:, 0]]
@@ -324,17 +331,9 @@ class VO():
 
         # Remove outliers and populate point cloud
         feature_3d = feature_3d[np.where(inlier_mask[:,0] == 1)].astype("float32")
-
-        # if self.world_points_3d is None:
-        #     world_points_3d = feature_3d
-        # else:
-        #     self.world_points_3d = np.vstack((self.world_points_3d, feature_3d))
-
-        # Append pose to history
-        # todo: maybve buffer?
-        # self.poses = np.dstack((self.poses, np.hstack((R_C_W, t_C_W))))
-
+        
         pose = np.hstack((R_C_W, t_C_W))
+        
         return pose, feature_3d
 
     def check_num_inliers(self):
@@ -346,7 +345,7 @@ class VO():
         '''
         pass
 
-    def triangulate_points(self):
+    def triangulate_new_points(self, query_pose, matches):
         '''
         Parameters
         ----------
@@ -364,17 +363,26 @@ class VO():
         -------
         points_3d: 4xN array of reconstructed points in homogeneous coordinates [[x;y;z;w], ...]
         '''
-        # TODO add internal indexer (ie. "what image index is the current query image")
-        M_keyframe = self.poses[self.last_keyframe["index"]]
-        M_query = self.poses[:,:,internal_indexer] # set internal indexer to get query pose after written from RANSAC
-        P_keyframe = self.last_keyframe["features"]
-        P_query = self.query_features["features"]
+        M_keyframe = self.K @ self.keyframe_pos
+        M_query = self.K @ query_pose
+        p_keyframe = np.array(
+            [self.keyframe_features['keypoints'][match.trainIdx].pt
+             for match in matches]).T
+        p_query = np.array(
+            [self.query_features['keypoints'][match.queryIdx].pt
+             for match in matches]).T
+        # TODO: dont know if all matches are reliable
 
-        points_3d = cv2.triangulatePoints(M_keyframe, M_query, P_keyframe, P_query)
+        points_3d = cv2.triangulatePoints(M_keyframe, M_query, p_keyframe, p_query)
         
-        new_3d_points = np.zeros(points_3d.shape[1], 131)
-        new_3d_points[:,:4], new_3d_points[:,4:] = points_3d[:3].T, self.query_features["descriptors"] # package 3D points and their descriptors
+        # Package 3D points and their descriptors
+        new_3d_points = np.zeros((points_3d.shape[1], 131)).astype(np.float32)
+        new_3d_points[:,:3] = (points_3d[:3, :] / points_3d[3, :]).T
+        new_3d_points[:,3:] = np.array(
+            [self.query_features["descriptors"][match.queryIdx]
+             for match in matches])
         self.world_points_3d = np.vstack((self.world_points_3d, new_3d_points))
+        self.num_keyframe_points_3d = points_3d.shape[0]
         
 
     def reprojectPoints(self, P, M, K):
