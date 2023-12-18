@@ -4,6 +4,13 @@ import cv2
 import os
 import matplotlib.pyplot as plt
 
+# For pose
+# https://dfki-ric.github.io/pytransform3d/install.html
+import pytransform3d.transformations as pt
+import pytransform3d.trajectories as ptr
+import pytransform3d.rotations as pr
+import pytransform3d.camera as pc
+
 class VO():
     
     def __init__(self, calib_file: str):
@@ -375,6 +382,13 @@ class VO():
                 - Must provide matches: Tuple[cv2.DMatch].
                 - Setting project_points=True allowed to visualize world 3D point 
                 projections in camera
+            'pose'
+                - Visualizes the query frame camera pose and the trajectory of
+                previous poses
+            'ptc'
+                - Visualizes point cloud using matplotlib.
+                - Still TODO
+                    - May want to integrate with 'pose'?
             
         matches: Tuple[cv2.DMatch]
             - Required for 'match' mode. 
@@ -498,6 +512,40 @@ class VO():
             
         else:
             raise ValueError("Please input a valid mode for. See visualize() definition.")
+        
+        if mode == 'pose':
+            quat_poses = [] # TODO First convert [R|t] to quaternion
+            for i in range(self.poses.shape[2]):
+                quat_poses[i, 3:] = pr.quaternion_wxyz_from_xyzw(quat_poses[i, 3:])
+            cam2world_trajectory = ptr.transforms_from_pqs(quat_poses)
+
+            # Stopped here
+            plt.figure(figsize=(5, 5))
+            ax = pt.plot_transform(s=0.3)
+            ax = ptr.plot_trajectory(ax, P=P, s=0.1, n_frames=10)
+
+            image_size = np.array([1920, 1440])
+
+            key_frames_indices = np.linspace(0, len(P) - 1, 10, dtype=int)
+            colors = cycle("rgb")
+            for i, c in zip(key_frames_indices, colors):
+                pc.plot_camera(ax, intrinsic_matrix, cam2world_trajectory[i],
+                            sensor_size=image_size, virtual_image_distance=0.2, c=c)
+
+            pos_min = np.min(P[:, :3], axis=0)
+            pos_max = np.max(P[:, :3], axis=0)
+            center = (pos_max + pos_min) / 2.0
+            max_half_extent = max(pos_max - pos_min) / 2.0
+            ax.set_xlim((center[0] - max_half_extent, center[0] + max_half_extent))
+            ax.set_ylim((center[1] - max_half_extent, center[1] + max_half_extent))
+            ax.set_zlim((center[2] - max_half_extent, center[2] + max_half_extent))
+
+            ax.view_init(azim=110, elev=40)
+
+            plt.show()
+        
+        if mode == 'ptc': 
+            pass
 
 
 
