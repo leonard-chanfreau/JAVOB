@@ -10,6 +10,11 @@ import pytransform3d.transformations as pt
 import pytransform3d.trajectories as ptr
 import pytransform3d.rotations as pr
 import pytransform3d.camera as pc
+from scipy.spatial.transform import Rotation as R
+from cycler import cycle
+from mpl_toolkits.mplot3d import proj3d
+
+
 
 class VO():
     
@@ -509,43 +514,64 @@ class VO():
             plt.ylim(im.shape[0] + padding, -padding)
             plt.show()
             plt.pause(0.01)
-            
-        else:
-            raise ValueError("Please input a valid mode for. See visualize() definition.")
         
-        if mode == 'pose':
-            quat_poses = [] # TODO First convert [R|t] to quaternion
-            for i in range(self.poses.shape[2]):
-                quat_poses[i, 3:] = pr.quaternion_wxyz_from_xyzw(quat_poses[i, 3:])
-            cam2world_trajectory = ptr.transforms_from_pqs(quat_poses)
+        elif mode == 'pose':
 
-            # Stopped here
-            plt.figure(figsize=(5, 5))
-            ax = pt.plot_transform(s=0.3)
-            ax = ptr.plot_trajectory(ax, P=P, s=0.1, n_frames=10)
+            # TESTING PYTRANSFROM3D ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+            # transpose() changes dstack (3x3xN) to vstack (Nx3x3)
+            pose_rot_mat = R.from_matrix(np.transpose(self.poses[:3,:3,:], (2, 0, 1))) 
+            # Convert [R|t] to quaternion (Nx4)
+            quat = R.as_quat(pose_rot_mat)
 
-            image_size = np.array([1920, 1440])
+            quat = quat[:, (3,0,1,2)] # xyzw to wxyz format
+            # does same as pr.quaternion_wxyz_from_xyzw()
+            
+            # Creating N x (x, y, z, qw, qx, qy, qz)
+            pose_quat = np.hstack((np.transpose(self.poses[:3,-1,:]), quat))
+    
+            cam2world_trajectory = ptr.transforms_from_pqs(pose_quat)
 
-            key_frames_indices = np.linspace(0, len(P) - 1, 10, dtype=int)
+            fig = plt.figure(figsize=(8, 8))
+            ax = fig.add_subplot(111, projection='3d')  # Create a 3D subplot
+
+            # Plot camera trajectory
+            ax = pt.plot_transform(ax, s=0.3)  # Use the same axis for the camera trajectory
+            ax = ptr.plot_trajectory(ax, P=pose_quat, s=0.1, n_frames=10)
+
+            # image_size = np.array([1920, 1440])
+            key_frames_indices = np.linspace(0, len(pose_quat) - 1, 10, dtype=int)
             colors = cycle("rgb")
             for i, c in zip(key_frames_indices, colors):
-                pc.plot_camera(ax, intrinsic_matrix, cam2world_trajectory[i],
-                            sensor_size=image_size, virtual_image_distance=0.2, c=c)
+                pc.plot_camera(ax, self.K, cam2world_trajectory[i],
+                            sensor_size=self.query_frame.shape, virtual_image_distance=0.2, c=c)
 
-            pos_min = np.min(P[:, :3], axis=0)
-            pos_max = np.max(P[:, :3], axis=0)
+            # Set limits and view for camera trajectory
+            pos_min = np.min(pose_quat[:, :3], axis=0)
+            pos_max = np.max(pose_quat[:, :3], axis=0)
             center = (pos_max + pos_min) / 2.0
             max_half_extent = max(pos_max - pos_min) / 2.0
             ax.set_xlim((center[0] - max_half_extent, center[0] + max_half_extent))
             ax.set_ylim((center[1] - max_half_extent, center[1] + max_half_extent))
             ax.set_zlim((center[2] - max_half_extent, center[2] + max_half_extent))
 
-            ax.view_init(azim=110, elev=40)
+            latest_pose = pose_quat[-1, :3]  # Extract translation from the latest pose
+            ax.view_init(azim=-90, elev=0)  # Top-down (XZ) view
+
+            # Plot 3D point cloud on the same plot centered around the latest pose
+            x = self.world_points_3d[:, 0] - latest_pose[0]
+            y = self.world_points_3d[:, 1] - latest_pose[1]
+            z = self.world_points_3d[:, 2] - latest_pose[2]
+            ax.scatter(x, y, z)
 
             plt.show()
+            # END TESTING PYTRANSFROM3D ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         
-        if mode == 'ptc': 
+        elif mode == 'ptc': 
             pass
+        
+        else:
+            raise ValueError("Please input a valid mode for. See visualize() definition.")
+
 
 
 

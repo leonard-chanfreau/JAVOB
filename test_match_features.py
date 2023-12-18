@@ -19,16 +19,17 @@ if __name__ == '__main__':
     pose_exists = False
     
     # for i in range(1, len(image_files)):
-    for i in range(1, 10): # first use 10 frames
+    for i in range(1, 20): # first use 10 frames
         query_img = vo.read_image_(file=os.path.join(directory, image_files[i]))
         prev_img = vo.read_image_(file=os.path.join(directory, image_files[i - 1]))
 
        # Extract/store previous features first
-        vo.extract_features(image=prev_img, algorithm='sift')
-        prev_features = vo.query_features.copy()  # store features
+        prev_features = vo.extract_features(image=prev_img, algorithm='sift')
+        vo.keyframe_features = prev_features.copy()
+        # prev_features = vo.query_features.copy()  # store features
 
         # New call of VO class (we are working in relation to query image)
-        vo.extract_features(image=query_img, algorithm='sift')
+        vo.query_features = vo.extract_features(image=query_img, algorithm='sift')
         query_features = vo.query_features.copy()
         vo.query_frame = query_img
         
@@ -90,9 +91,9 @@ if __name__ == '__main__':
             vo.visualize(mode='match', matches=matches2d2d)
 
         else:
-            
+            vo.num_keyframe_points_3d = vo.world_points_3d.shape[0]
             num_previous_descriptors = vo.world_points_3d.shape[0] # (Hardcoding for testing), trying to match 50 of existing 3D points to query points
-            matches3d2d = vo.match_features("3d2d", num_matches_previous=num_previous_descriptors)
+            matches3d2d = vo.match_features("3d2d", descriptor_prev=num_previous_descriptors)
 
             object_points = np.array([vo.world_points_3d[:,:3][match.trainIdx] for match in matches3d2d])
             query_points = np.array([query_features["keypoints"][match.queryIdx] for match in matches3d2d])
@@ -131,7 +132,8 @@ if __name__ == '__main__':
             # projected_3D_points = np.hstack((projected_3D_points[0][:,:,0], projected_3D_points[0][:,:,1])) 
             
             # Our own visualizer
-            vo.visualize(mode='match', matches=matches3d2d, project_points=True)
+            # vo.visualize(mode='match', matches=matches3d2d, project_points=True)
+            vo.visualize(mode='pose')
             b=2
 
         # cv2.imshow('2d2d SFM then 3d2d Matching', img3)
