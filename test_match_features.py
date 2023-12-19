@@ -132,7 +132,7 @@ if __name__ == '__main__':
             # projected_3D_points = np.hstack((projected_3D_points[0][:,:,0], projected_3D_points[0][:,:,1])) 
             
             # Our own visualizer
-            # vo.visualize(mode='match', matches=matches3d2d, project_points=True)
+            vo.visualize(mode='match', matches=matches3d2d, project_points=True)
             vo.visualize(mode='traj2d')
             b=2
 

@@ -448,9 +448,13 @@ class VO():
             if matches is None:
                 raise ValueError("Please input match correspondances \
                                  (Tuple[cv2.DMatch]) when using 'match' mode.")
-            
+            match_plot_num = 1 # to not overwrite other figs
+
+            plt.figure(match_plot_num)
+            plt.figure(match_plot_num).clf() # clears last "features_all" points
+            plt.ion()  # interactive mode on for dynamic updating
+
             im = self.query_frame
-            plt.clf() # clears last "features_all" points
             implot = plt.imshow(im)
             padding = 50 # whitespace padding when visualizing data
 
@@ -491,21 +495,24 @@ class VO():
             # Visualize image with whitespace padding
             plt.xlim(-padding, im.shape[1] + padding)
             plt.ylim(im.shape[0] + padding, -padding)
-            plt.show()
+            plt.draw()
             plt.pause(0.001)
+            plt.ioff()  # interactive mode off after updating
         
         elif mode == 'traj2d':
             #TODO later: plot new 3d points in blue, old 3d points in different shade.
                 # NOTE ENSURE points are in world frame. triangulatePoints() triangulates in left camera frame
                 # TODO ENSURE correct planes (world points and R|T need to be mapped properly)
+            
+            traj_plot_number = 2 # to not overwrite 'match'
 
-            if not plt.fignum_exists(1):
+            if not plt.fignum_exists(traj_plot_number):
                 plt.ion()  # Turn on interactive mode for dynamic updating
-                fig = plt.figure(figsize=(7, 6))
+                fig = plt.figure(num=traj_plot_number, figsize=(7, 6))
                 traj = fig.add_subplot(111)
             else:
-                # If the figure exists, clear the current plot
-                plt.clf()
+                # If figure exists, clear plot
+                plt.figure(traj_plot_number).clf()
                 fig = plt.gcf()
                 traj = fig.add_subplot(111)
 
@@ -523,7 +530,7 @@ class VO():
 
             plt.draw()
             plt.pause(0.001)
-            b=2
+            
 
             # # OLD NOTES TO COME BACK TO
             # Plot pose
