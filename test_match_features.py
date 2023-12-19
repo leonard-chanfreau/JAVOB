@@ -133,7 +133,7 @@ if __name__ == '__main__':
             
             # Our own visualizer
             # vo.visualize(mode='match', matches=matches3d2d, project_points=True)
-            vo.visualize(mode='pose')
+            vo.visualize(mode='traj2d')
             b=2
 
         # cv2.imshow('2d2d SFM then 3d2d Matching', img3)
