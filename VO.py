@@ -479,8 +479,8 @@ class VO():
                             edgecolors='cyan')
 
                 # # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-                # # Leonard's implementation. 
-                # # Still fails, projected_points returns NaN
+                # # Attempting cv2.projectPoints implementation. 
+                # # Still fails, returns NaN
                 # projected_points, _ = cv2.projectPoints(\
                 #     objectPoints=self.world_points_3d[:,:3].copy(), 
                 #     rvec=self.poses[:,:3,-1], 
@@ -517,7 +517,8 @@ class VO():
                 traj = fig.add_subplot(111)
 
             proj_mat = np.transpose(self.poses, (2, 0, 1))
-            traj.plot(proj_mat[:, 0, 3], proj_mat[:, 2, 3], label='Trajectory')
+            # NOTE trajectory Z needs to be multiplied by -1 
+            traj.plot(proj_mat[:, 0, 3], -proj_mat[:, 2, 3], label='Trajectory')
             traj.set_xlabel('X')
             traj.set_ylabel('Z')
 
@@ -530,7 +531,6 @@ class VO():
 
             plt.draw()
             plt.pause(0.001)
-            
 
             # # OLD NOTES TO COME BACK TO
             # Plot pose
