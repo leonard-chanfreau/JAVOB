@@ -31,7 +31,7 @@ if __name__ == '__main__':
         # New call of VO class (we are working in relation to query image)
         vo.query_features = vo.extract_features(image=query_img, algorithm='sift')
         query_features = vo.query_features.copy()
-        vo.query_frame = query_img
+        vo.query_image = query_img
         
         # 8pt
         if pt_cloud_exists is False:
@@ -91,7 +91,7 @@ if __name__ == '__main__':
             vo.visualize(mode='match', matches=matches2d2d)
 
         else:
-            vo.num_keyframe_points_3d = vo.world_points_3d.shape[0]
+            vo.num_points_3d = vo.world_points_3d.shape[0]
             num_previous_descriptors = vo.world_points_3d.shape[0] # (Hardcoding for testing), trying to match 50 of existing 3D points to query points
             matches3d2d = vo.match_features("3d2d", descriptor_prev=num_previous_descriptors)
 

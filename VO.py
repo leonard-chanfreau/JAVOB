@@ -26,9 +26,20 @@ class VO():
         Calibration Matrix.
     num_feature: int
         Number of features extracted from each image.
+    max_distance_threshold: float
+        Maximum distance to triangulate new points
+    query_image: np.array
+        Input image
     query_features: Dict
         Features of the query image: features (u,v) (key "features") and their
         HoG descriptor (key "descriptors").
+    keyframe_image: np.array
+        Image of the last keyframe.
+    keyframe_pos: np.array
+        Camera pose at the last keyframe (stack [R|t])
+    keyframe_features: 
+        Features of the keyframe image: features (u,v) (key "features") and
+        their HoG descriptor (key "descriptors").
     last_keyframe: Dict
         Features of the last keyframe: 2D features (u,v) (key "features"), their
         HoG descriptor (key "descriptors") and the index of the image (key
@@ -39,8 +50,12 @@ class VO():
         descriptor.\n
         Dynamically incremented every time we a new keyframe is used to
         triangulate new 3d points.
+    num_points_3d: int
+        number of 3d points in the database.
     poses: np.Ndarray (3 x 4 x nimages)
-        History of the camera poses: stacked [R|t] projection matrices.
+        History of the camera poses: stacked [R|t] matrices.
+    iteration: int
+        Counter for number of call to run.
     feature_extraction_config: Dict
         Contain all config parameters required by the feature extraction
         algorithm.
@@ -65,15 +80,15 @@ class VO():
         self.num_features = 1000
         self.max_distance_thresh = 50
         # Query image info
-        self.query_frame = None #TODO: Doc and rename img
+        self.query_image = None
         self.query_features = {}
         # Last keyframe image info
-        self.keyframe = None #TODO: Doc and rename img
+        self.keyframe_image = None
         self.keyframe_pos = None
         self.keyframe_features = {}
         # Database storage
         self.world_points_3d = None
-        self.num_keyframe_points_3d = None  #TODO: rename num_point_3d
+        self.num_points_3d = None
         self.poses = [np.hstack([np.eye(3), np.zeros((3,1))])]
         # internal state
         self.iteration = 0
@@ -84,23 +99,118 @@ class VO():
             }
         }
 
+    def run(self, image: np.ndarray):
+        '''
+        Treat new incoming frame (image) to continue building the trajectory
+        using the VO pipeline.
+        Parameters
+        ----------
+        image: np.ndarray
+            New incoming frame.
+        Returns
+        -------
+
+        '''
+        # Set parameters
+        # inliers threshold -> activate re-triangulation
+        thresh_inliers = 60
+        # Increment the call-counter
+        self.iteration += 1
+        # ================== INITIALIZATION ================== #
+        # Set very first frame as keyframe and world frame reference
+        if self.keyframe_image is None:
+            self.keyframe_image = image
+            self.keyframe_features = self.extract_features(image,
+                                                           algorithm="sift")
+            return
+        # The next incoming frames are treated as query
+        self.query_image = image
+        # If the point cloud is not yet set.
+        if self.world_points_3d is None:
+            # Use frame to initialize the point cloud and set new keyframe
+            self.initialize_point_cloud(image)
+            return
+        # ================== CONTINUOUS RUN ================== #
+        # Extract 2d features from query image
+        self.query_features = self.extract_features(image, algorithm="sift")
+        # Find matches between those features and last few points of
+        # world_points_3d (CURRENT keyframe points)
+        matches = self.match_features(method="3d2d")
+        # Estimate the camera pose from those matches
+        pose, num_inliers = self.estimate_camera_pose(matches=matches)
+        self.poses.append(pose)
+        
+        # Visualization
+        print(f"#Inliers : {num_inliers}")
+        self.visualize(mode='match', matches=matches)
+        self.visualize(mode="traj2d")
+
+        # Check if enough inliers are found,
+        if num_inliers < thresh_inliers: # TODO: Maybe rather a percentage of point cloud
+            # Expand point cloud using new keyframe (query) and old keyframe
+            matches = self.match_features("2d2d")
+            self.triangulate_new_points(pose, matches)   #TODO: Maybe a wrapper as initialize point cloud that checks if camera are distant enough
+            self.keyframe_image = image
+            self.keyframe_pos = self.poses[-1]
+            self.keyframe_features = self.query_features
+            return
+
+    def initialize_point_cloud(self, image: np.ndarray):
+        """
+        Initialize point cloud if depth uncertainty is below threshold (i.e.
+        frames are sufficiently far apart)
+        
+        Parameters
+        ----------
+        image: np.ndarray
+            Query image
+
+        Returns
+        -------
+
+        """
+        # Set threshold for average depth
+        # TODO hyperparam dict
+        thresh = 0.10
+        # Extract query features
+        self.query_features = self.extract_features(image=image)
+        # Match query and keyframe features
+        matches = self.match_features(method="2d2d")
+        # Initialize preliminary point cloud
+        # TODO: remove self.... as args?
+        pose, points_3d = self.compute_pose_and_3D_pts(
+            self.query_features, self.keyframe_features, matches)
+        # Get Z coord, average depth and baseline
+        depth = points_3d[:,2]
+        average_depth = np.mean(depth)
+        baseline = np.linalg.norm(pose[:,-1])
+        # Check average depth criterion
+        if baseline/average_depth > thresh:
+            # Uncertainty is below threshold: set point cloud and new keyframe
+            self.world_points_3d = points_3d
+            self.num_points_3d = points_3d.shape[0]
+            self.poses.append(pose)
+            self.keyframe_image = image #TODO: maybe small method to set keyframe
+            self.keyframe_pos = self.poses[-1]
+            self.keyframe_features = self.extract_features(image=image, algorithm="sift")
+
     def extract_features(self, image, algorithm: str = "sift"):
         '''
-        I left the option to implement other feature extraction methods.
-        Using self.feature_extraction_algorithms_config dict in the constructor, the hyperparams can be adjusted.
+        Extract 2d features from an image using the choosen algorithm (SIFT by
+        default).
 
         Parameters
         -------
         image: np.ndarray
-            image of which features are to be extracted
+            Image of which features are to be extracted.
         algorithm: str
-            feature extraction algorithm
+            Feature extraction algorithm (default: SIFT).
 
         Comments
         -------
         I left the option to implement other feature extraction methods.
-        Using self.feature_extraction_config dict in the constructor,
-        the hyperparameters can be adjusted.
+        Uses self.feature_extraction_config dict in the constructor.
+        The hyperparameters can be adjusted.
 
         Returns
         -------
@@ -122,115 +232,11 @@ class VO():
             keypoints, descriptors = sift.detectAndCompute(image, None)
         else:
             raise ValueError(f'algorithm {algorithm} not implemented')
-
+        # Return results.
         #TODO: When implementing other algos, make sure the output is of the
         # same format.
         return {"keypoints": keypoints, "descriptors": descriptors}
         #TODO: store query image descriptors in self.world_points_3d ---> THIS MAY GO IN TRIANGULATE() function
-
-    def initialize_point_cloud(self, image: np.ndarray):
-        """
-        initialize point cloud if depth uncertainty is below threshold (i.e. frames are sufficiently far apart)
-
-        Parameters
-        ----------
-        image:
-            query image
-
-        Returns
-        -------
-
-        """
-
-        # extract and set query features
-        self.query_features = self.extract_features(image=image)
-
-        # match query and keyframe features
-        matches = self.match_features(method="2d2d")
-
-        # initialize preliminary point cloud
-        # todo remove self.... as args?
-        pose, points_3d = self.compute_pose_and_3D_pts(query_feature=self.query_features, train_feature=self.keyframe_features, matches=matches)
-
-        # todo hyperparam dict
-        thresh = 0.10
-
-        # get Z coord and average depth and baseline
-        depth = points_3d[:,2]
-        average_depth = np.mean(depth)
-        baseline = np.linalg.norm(pose[:,-1])
-
-        # check average depth criterion
-        if baseline/average_depth > thresh:
-            self.world_points_3d = points_3d
-            self.num_keyframe_points_3d = points_3d.shape[0]
-            self.poses.append(pose)
-            return True
-        else:
-            return False
-
-    def run(self, image: np.ndarray):
-        '''
-
-        Parameters
-        ----------
-        image
-
-        Returns
-        -------
-
-        '''
-
-        # match threshold
-        thresh_inliers = 60
-
-        # set very first keyframe
-        if self.keyframe is None:
-            self.keyframe = image
-            self.keyframe_features = self.extract_features(image=image, algorithm="sift")
-            self.iteration += 1
-            return
-
-        # initialize first point cloud and set new keyframe
-        if self.world_points_3d is None:
-            self.query_frame = image
-            if self.initialize_point_cloud(image=image):
-                self.keyframe = image
-                self.keyframe_pos = self.poses[-1]
-                self.keyframe_features = self.extract_features(image=image, algorithm="sift")
-            self.iteration += 1
-            return
-
-        # continuous run
-        # extract features and find matches between self.query_features
-        # and self.world_points_3d[-self.num_keyframe_points_3d:, 3:] (CURRENT keyframe points)
-        self.query_frame = image
-        self.query_features = self.extract_features(image=image, algorithm="sift")
-        matches = self.match_features(method="3d2d")
-
-        # estimate cam pose
-        pose, num_inliers = self.estimate_camera_pose(matches=matches)
-        self.poses.append(pose)
-        
-        print(f"#Inliers : {num_inliers}")
-        self.iteration += 1
-        
-        self.visualize(mode='match', matches=matches)
-        self.visualize(mode="traj2d")
-        
-        #if self.iteration > 25:
-            #self.plot_map()
-
-        # Check if enough inliers are found,
-        # else reinit new keyframe and expand point cloud using new keyframe and old keyframe
-        if num_inliers < thresh_inliers: # TODO: Maybe rather a percentage of point cloud
-            matches = self.match_features("2d2d")
-            self.triangulate_new_points(pose, matches)   #TODO: Maybe a wrapper as initialize point cloud that checks if camera are distant enough
-            self.keyframe = image
-            self.keyframe_pos = self.poses[-1]
-            self.keyframe_features = self.query_features
-            return
-
 
 
     def match_features(self, method: str, descriptor_prev=None):
@@ -304,7 +310,7 @@ class VO():
             todo. engelbracht: idea: just return the pose, its appended in run?
         '''
         # Retrieve matched 2D/3D points.
-        matches_array = np.array([(match.queryIdx, match.trainIdx+len(self.world_points_3d)-self.num_keyframe_points_3d) for match in matches])
+        matches_array = np.array([(match.queryIdx, match.trainIdx+len(self.world_points_3d)-self.num_points_3d) for match in matches])
         train_object_points = self.world_points_3d[matches_array[:,1], 0:3]       # 3D pt (Nx3)
         # image_points = self.query_features["keypoints"][matches_array[:,0]]  # 2D pt (Nx2)
         query_image_points = np.array([self.query_features['keypoints'][match.queryIdx].pt for match in matches])
@@ -479,7 +485,7 @@ class VO():
             [self.query_features["descriptors"][match.queryIdx]
              for match in matches])[mask]
         self.world_points_3d = np.vstack((self.world_points_3d, new_3d_points))
-        self.num_keyframe_points_3d = points_3d.shape[0]
+        self.num_points_3d = points_3d.shape[0]
         #self.plot_map()
         
         
@@ -580,7 +586,7 @@ class VO():
             plt.figure(match_plot_num).clf() # clears last "features_all" points
             plt.ion()  # interactive mode on for dynamic updating
 
-            im = self.query_frame
+            im = self.query_image
             implot = plt.imshow(im)
             padding = 50 # whitespace padding when visualizing data
 
@@ -698,7 +704,7 @@ class VO():
             colors = cycle("rgb")
             for i, c in zip(key_frames_indices, colors):
                 pc.plot_camera(ax, self.K, cam2world_trajectory[i],
-                            sensor_size=self.query_frame.shape, virtual_image_distance=0.2, c=c)
+                            sensor_size=self.query_image.shape, virtual_image_distance=0.2, c=c)
 
             # Set limits and view for camera trajectory
             pos_min = np.min(pose_quat[:, :3], axis=0)
