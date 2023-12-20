@@ -4,6 +4,18 @@ import cv2
 import os
 import matplotlib.pyplot as plt
 
+# For pose
+# https://dfki-ric.github.io/pytransform3d/install.html
+import pytransform3d.transformations as pt
+import pytransform3d.trajectories as ptr
+import pytransform3d.rotations as pr
+import pytransform3d.camera as pc
+from scipy.spatial.transform import Rotation as R
+from cycler import cycle
+from mpl_toolkits.mplot3d import proj3d
+
+
+
 class VO():
     
     def __init__(self, calib_file: str):
@@ -444,19 +456,29 @@ class VO():
         -------
         mode: str
             'match': 
-                - Visualizes the query image inlier feature 
+                Visualizes the query image inlier feature 
                 matches overlaid on image. 
-                - Must provide matches: Tuple[cv2.DMatch].
-                - Setting project_points=True allowed to visualize world 3D point 
+                Must provide matches: Tuple[cv2.DMatch].
+                Setting project_points=True allowed to visualize world 3D point 
                 projections in camera
+            'traj2d'
+                RECOMMENDED
+                2D top-down view of trajectory and point cloud.
+            'traj3d' 
+                NOTE: NOT recommended
+                Attempt at using pytransform3d library. Somewhat works but can't
+                see global view of traj and pt cloud.
+                Visualizes the query frame camera pose and the trajectory of
+                previous poses
             
         matches: Tuple[cv2.DMatch]
-            - Required for 'match' mode. 
-            - List of correspondances between. 
+            Required for 'match' mode. 
+            List of correspondances between. 
             vizualize() only reads the queryIdx of the correspondances in order
             to determine u,v locations for inliers.
 
         project_points (optional): bool
+            Optional for 'match' mode.
             Default is False. If True, project all self.world_3d_points into 
             the camera frame.
             TODO: trim down number of 3D points to project into the scene each 
@@ -496,37 +518,17 @@ class VO():
         -------
         '''
 
-        # # Plot pose
-        # num_poses = len(self.poses)
-        # pose_figsize=(7, 8)
-        # _, ax = plt.subplots(figsize=pose_figsize)
-        
-        # for i, pose in enumerate(self.poses):
-        #     # Extract translation
-        #     xy = pose[:,-1]
-
-        #     # Ground plane in camera xz plane, 3D points in world frame
-
-        # Alternative Poses code (come back to this)
-        # ground_truth = np.zeros((len(poses), 3, 4))
-        # for i in range(len(poses)):
-        #     ground_truth[i] = np.array(poses.iloc[i]).reshape((3, 4))
-        # # matplotlib widget
-        # fig = plt.figure(figsize=(7,6))
-        # traj = fig.add_subplot(111, projection='3d')
-        # traj.plot(ground_truth[:,:,3][:,0], ground_truth[:,:,3][:,1], ground_truth[:,:,3][:,2])
-        # traj.set_xlabel('x')
-        # traj.set_ylabel('y')
-        # traj.set_zlabel('z')
-
-        # Quick visualizer for query frame with features
         if mode == 'match':
             if matches is None:
                 raise ValueError("Please input match correspondances \
                                  (Tuple[cv2.DMatch]) when using 'match' mode.")
-            
+            match_plot_num = 1 # to not overwrite other figs
+
+            plt.figure(match_plot_num)
+            plt.figure(match_plot_num).clf() # clears last "features_all" points
+            plt.ion()  # interactive mode on for dynamic updating
+
             im = self.query_frame
-            plt.clf() # clears last "features_all" points
             implot = plt.imshow(im)
             padding = 50 # whitespace padding when visualizing data
 
@@ -551,8 +553,8 @@ class VO():
                             edgecolors='cyan')
 
                 # # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-                # # Leonard's implementation. 
-                # # Still fails, projected_points returns NaN
+                # # Attempting cv2.projectPoints implementation. 
+                # # Still fails, returns NaN
                 # projected_points, _ = cv2.projectPoints(\
                 #     objectPoints=self.world_points_3d[:,:3].copy(), 
                 #     rvec=self.poses[:,:3,-1], 
@@ -567,9 +569,106 @@ class VO():
             # Visualize image with whitespace padding
             plt.xlim(-padding, im.shape[1] + padding)
             plt.ylim(im.shape[0] + padding, -padding)
-            plt.show()
-            plt.pause(0.01)
+            plt.draw()
+            plt.pause(0.001)
+            plt.ioff()  # interactive mode off after updating
+        
+        elif mode == 'traj2d':
+            #TODO later: plot new 3d points in blue, old 3d points in different shade.
+                # NOTE ENSURE points are in world frame. triangulatePoints() triangulates in left camera frame
+                # TODO ENSURE correct planes (world points and R|T need to be mapped properly)
             
+            traj_plot_number = 2 # to not overwrite 'match'
+
+            if not plt.fignum_exists(traj_plot_number):
+                plt.ion()  # Turn on interactive mode for dynamic updating
+                fig = plt.figure(num=traj_plot_number, figsize=(7, 6))
+                traj = fig.add_subplot(111)
+            else:
+                # If figure exists, clear plot
+                plt.figure(traj_plot_number).clf()
+                fig = plt.gcf()
+                traj = fig.add_subplot(111)
+
+            proj_mat = np.transpose(self.poses, (2, 0, 1))
+            # NOTE trajectory Z needs to be multiplied by -1 
+            traj.plot(proj_mat[:, 0, 3], -proj_mat[:, 2, 3], label='Trajectory')
+            traj.set_xlabel('X')
+            traj.set_ylabel('Z')
+
+            x_world = self.world_points_3d[:, 0]
+            # y_world = self.world_points_3d[:, 1]
+            z_world = self.world_points_3d[:, 2]
+            traj.scatter(x_world, z_world, color='red', label='World Points')
+
+            traj.legend()
+
+            plt.draw()
+            plt.pause(0.001)
+
+            # # OLD NOTES TO COME BACK TO
+            # Plot pose
+            # num_poses = len(self.poses)
+            # pose_figsize=(7, 8)
+            # _, ax = plt.subplots(figsize=pose_figsize)
+            
+            # for i, pose in enumerate(self.poses):
+            #     # Extract translation
+            #     xy = pose[:,-1]
+
+            #     # Ground plane in camera xz plane, 3D points in world frame
+        
+        elif mode == 'traj3d':
+
+            # TESTING PYTRANSFROM3D ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+            # transpose() changes dstack (3x3xN) to vstack (Nx3x3)
+            pose_rot_mat = R.from_matrix(np.transpose(self.poses[:3,:3,:], (2, 0, 1))) 
+            # Convert [R|t] to quaternion (Nx4)
+            quat = R.as_quat(pose_rot_mat)
+
+            quat = quat[:, (3,0,1,2)] # xyzw to wxyz format
+            # does same as pr.quaternion_wxyz_from_xyzw()
+            
+            # Creating N x (x, y, z, qw, qx, qy, qz)
+            pose_quat = np.hstack((np.transpose(self.poses[:3,-1,:]), quat))
+    
+            cam2world_trajectory = ptr.transforms_from_pqs(pose_quat)
+
+            fig = plt.figure(figsize=(8, 8))
+            ax = fig.add_subplot(111, projection='3d')  # Create a 3D subplot
+
+            # Plot camera trajectory
+            ax = pt.plot_transform(ax, s=0.3)  # Use the same axis for the camera trajectory
+            ax = ptr.plot_trajectory(ax, P=pose_quat, s=0.1, n_frames=10)
+
+            # image_size = np.array([1920, 1440])
+            key_frames_indices = np.linspace(0, len(pose_quat) - 1, 10, dtype=int)
+            colors = cycle("rgb")
+            for i, c in zip(key_frames_indices, colors):
+                pc.plot_camera(ax, self.K, cam2world_trajectory[i],
+                            sensor_size=self.query_frame.shape, virtual_image_distance=0.2, c=c)
+
+            # Set limits and view for camera trajectory
+            pos_min = np.min(pose_quat[:, :3], axis=0)
+            pos_max = np.max(pose_quat[:, :3], axis=0)
+            center = (pos_max + pos_min) / 2.0
+            max_half_extent = max(pos_max - pos_min) / 2.0
+            ax.set_xlim((center[0] - max_half_extent, center[0] + max_half_extent))
+            ax.set_ylim((center[1] - max_half_extent, center[1] + max_half_extent))
+            ax.set_zlim((center[2] - max_half_extent, center[2] + max_half_extent))
+
+            latest_pose = pose_quat[-1, :3]  # Extract translation from the latest pose
+            ax.view_init(azim=-90, elev=0)  # Top-down (XZ) view
+
+            # Plot 3D point cloud on the same plot centered around the latest pose
+            x = self.world_points_3d[:, 0] - latest_pose[0]
+            y = self.world_points_3d[:, 1] - latest_pose[1]
+            z = self.world_points_3d[:, 2] - latest_pose[2]
+            ax.scatter(x, y, z)
+
+            plt.show()
+            # END TESTING PYTRANSFROM3D ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        
         else:
             raise ValueError("Please input a valid mode for. See visualize() definition.")
         
