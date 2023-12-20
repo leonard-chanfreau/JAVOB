@@ -3,10 +3,10 @@ from utils import load_image_data
 from VO import VO
 
 if __name__ == '__main__':
-    directory = "D:/Master/VAMR/kitti/05/image_0"
+    directory = "../kitti/05/image_0"
     image_files = load_image_data(directory=directory)
 
-    calib_file = "D:/Master/VAMR/kitti/05/calib.txt"
+    calib_file = "../kitti/05/calib.txt"
     vo = VO(calib_file=calib_file)
 
     # get two images

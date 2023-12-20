@@ -10,6 +10,8 @@ class VO():
 
         self.K = self.read_calib_file_(path=calib_file)
         self.num_features = 1000
+
+        self.max_distance_thresh = 50
         
         # Query
         self.query_features = {} # {cv2.features, cv2.desciptors} storing 2D feature (u,v) and its HoG descriptor. Called via {"keypoints", "descriptors"}
@@ -25,9 +27,9 @@ class VO():
                                 # dynamic storage of triangulated 3D points in world frame and their descriptors (npoints x 128 np.ndarray)
         self.num_keyframe_points_3d = None
 
-        self.poses = [np.hstack([np.eye(3), np.zeros((3,1))])]# list(np.ndarray(3 x 4 x nimages)) where 3x4 is [R|t] projection matrix
+        self.poses = [np.hstack([np.eye(3), np.zeros((3,1))])]# list(np.ndarray(3 x 4 x nimages)) where 3x4 is [R_W_C|t_W_C] projection matrix
 
-        # interna state
+        # internal state
         self.iteration = 0
 
         # implemented feature extraction algorithms and their hyper params
@@ -107,6 +109,7 @@ class VO():
         if baseline/average_depth > thresh:
             self.world_points_3d = points_3d
             self.num_keyframe_points_3d = points_3d.shape[0]
+            self.poses.append(pose)
             return True
         else:
             return False
@@ -124,7 +127,7 @@ class VO():
         '''
 
         # match threshold
-        thresh_inliers = 30
+        thresh_inliers = 60
 
         # set very first keyframe
         if self.keyframe is None:
@@ -142,6 +145,7 @@ class VO():
                 self.keyframe_features = self.extract_features(image=image, algorithm="sift")
             self.iteration += 1
             return
+        #self.plot_map()
 
         # continuous run
         # extract features and find matches between self.query_features
@@ -156,6 +160,9 @@ class VO():
         
         print(f"#Inliers : {num_inliers}")
         self.iteration += 1
+        
+        #if self.iteration > 25:
+            #self.plot_map()
 
         # Check if enough inliers are found,
         # else reinit new keyframe and expand point cloud using new keyframe and old keyframe
@@ -203,7 +210,7 @@ class VO():
         elif method == '3d2d':
             if self.num_keyframe_points_3d is None:
                 raise ValueError("Please set a valid number of matches to create. Value must be positive.")
-            descriptor_prev = self.world_points_3d[-self.num_keyframe_points_3d:, 3:]
+            descriptor_prev = self.world_points_3d[-self.num_keyframe_points_3d:, 3:]   #TODO: this induce a shift -> see where impacted
             a = 2
         else:
             raise ValueError("Invalid retrieval method. Use '2d2d' or '3d2d'.")
@@ -234,51 +241,45 @@ class VO():
             todo. engelbracht: idea: just return the pose, its appended in run?
         '''
         # Retrieve matched 2D/3D points.
-        matches_array = np.array([(match.queryIdx, match.trainIdx) for match in matches])
-        object_points = self.world_points_3d[matches_array[:,1], 0:3]       # 3D pt (Nx3)
+        matches_array = np.array([(match.queryIdx, match.trainIdx+len(self.world_points_3d)-self.num_keyframe_points_3d) for match in matches])
+        train_object_points = self.world_points_3d[matches_array[:,1], 0:3]       # 3D pt (Nx3)
         # image_points = self.query_features["keypoints"][matches_array[:,0]]  # 2D pt (Nx2)
-        image_points = np.array([self.query_features['keypoints'][match.queryIdx].pt for match in matches])
+        query_image_points = np.array([self.query_features['keypoints'][match.queryIdx].pt for match in matches])
 
         # Run PnP
         success, rvec_C_W, t_C_W, inliers = cv2.solvePnPRansac(
-            object_points, image_points,
+            train_object_points, query_image_points,
             cameraMatrix=self.K, distCoeffs=np.zeros((4,1)))
         
-        R = self.keyframe_pos[:, :3]
-        t = self.keyframe_pos[:, 3].reshape(3, 1)
-        projected_points, _ = cv2.projectPoints(object_points, R, t, self.K, None)
-        projected_points = np.squeeze(projected_points)
-        
-        if self.iteration > 26:
-            matched_image = cv2.drawMatches(
-                self.query_frame, np.array([self.query_features["keypoints"][match.queryIdx] for match in matches]),
-                self.keyframe, np.array([cv2.KeyPoint(projected_points[i,0], projected_points[i,1], 5) for i in range(projected_points.shape[0])]),
-                [cv2.DMatch(i[0], i[0], 0) for i in inliers][:10],
-                None,
-                matchColor=(0, 255, 0),  # Green color for inliers
-                singlePointColor=(255, 0, 0)  # Blue color for keypoints
-            )
+        # if self.iteration > 26:
+        #     R = self.keyframe_pos[:, :3].T
+        #     t = -R@self.keyframe_pos[:, 3].reshape(3, 1)
+        #     projected_points, _ = cv2.projectPoints(train_object_points, R, t, self.K, None)
+        #     projected_points = np.squeeze(projected_points)
+        #     matched_image = cv2.drawMatches(
+        #         self.query_frame, np.array([self.query_features["keypoints"][match.queryIdx] for match in matches]),
+        #         self.keyframe, np.array([cv2.KeyPoint(projected_points[i,0], projected_points[i,1], 5) for i in range(projected_points.shape[0])]),
+        #         [cv2.DMatch(i[0], i[0], 0) for i in inliers][:10],
+        #         None,
+        #         matchColor=(0, 255, 0),  # Green color for inliers
+        #         singlePointColor=(255, 0, 0)  # Blue color for keypoints
+        #     )
 
-            plt.imshow(matched_image)
-            plt.show()
+        #     plt.imshow(matched_image)
+        #     plt.show()
         
         if not success:
             raise RuntimeError("RANSAC is not able to fit the model")
 
-        # Extract transformation matrix
+        # Extract rotation matrix
         R_C_W, _ = cv2.Rodrigues(rvec_C_W)
-        # t_C_W = t_C_W[:, 0]
-
-        # Add it to the list of poses
-        # T_C_W = np.eye(4)
-        # T_C_W[1:3, 1:3] = R_C_W
-        # T_C_W[1:3, 4] = t_C_W
-        T_C_W = np.hstack([R_C_W, t_C_W])
-        # self.poses = np.append((self.poses, T_C_W[:,:,np.newaxis]), axis = 2)
-        # return the number of points used to estimate the camera pose
-        # self.poses =
-        # return inliers.size()
-        return T_C_W, inliers.size
+        # Invert to have camera pose in world frame
+        R_W_C = R_C_W.T
+        t_W_C = -R_W_C @ t_C_W
+        # Construct pose matrix
+        T_W_C = np.hstack([R_W_C, t_W_C])
+        
+        return T_W_C, inliers.size
 
     def compute_pose_and_3D_pts(
             self, query_feature: Dict[tuple[cv2.Feature2D], np.ndarray], train_feature: Dict[tuple[cv2.Feature2D], np.ndarray],
@@ -300,7 +301,6 @@ class VO():
         -------
 
         '''
-        distance_thresh = 50
         # Retrieve matched 2D/2D points.
         matches_array = np.array(
             [(match.queryIdx, match.trainIdx) for match in matches])
@@ -321,7 +321,10 @@ class VO():
                             points2=second_img_pt,
                             cameraMatrix=self.K,
                             mask=essential_inliers,
-                            distanceThresh=distance_thresh)
+                            distanceThresh=self.max_distance_thresh)
+        # Convert it to camera pose in world frame
+        R_W_C = R_C_W.T
+        t_W_C = -R_W_C @ t_C_W
 
         # Create 3D feature concatenating normalized triangulated points and
         # descriptors.
@@ -332,7 +335,7 @@ class VO():
         # Remove outliers and populate point cloud
         feature_3d = feature_3d[np.where(inlier_mask[:,0] == 1)].astype("float32")
         
-        pose = np.hstack((R_C_W, t_C_W))
+        pose = np.hstack((R_W_C, t_W_C))
         
         return pose, feature_3d
 
@@ -363,26 +366,58 @@ class VO():
         -------
         points_3d: 4xN array of reconstructed points in homogeneous coordinates [[x;y;z;w], ...]
         '''
-        M_keyframe = self.K @ self.keyframe_pos
-        M_query = self.K @ query_pose
+        # Construct projections matrices: project 3D world point into the images
+        keyframe_R_C_W = self.keyframe_pos[:,:3].T
+        keyframe_t_C_W = - keyframe_R_C_W @ self.keyframe_pos[:,3:]
+        M_keyframe = self.K @ np.hstack((keyframe_R_C_W, keyframe_t_C_W))
+        query_R_C_W = query_pose[:,:3].T
+        query_t_C_W = - query_R_C_W @ query_pose[:,3:]
+        M_query = self.K @ np.hstack((query_R_C_W, query_t_C_W))
+        # Construct matched 2D point list
+        matches = sorted(matches, key=lambda x: x.distance)
         p_keyframe = np.array(
             [self.keyframe_features['keypoints'][match.trainIdx].pt
-             for match in matches]).T
+             for match in matches[:250]]).T
         p_query = np.array(
             [self.query_features['keypoints'][match.queryIdx].pt
-             for match in matches]).T
+             for match in matches[:250]]).T
         # TODO: dont know if all matches are reliable
+        
+        # matches = sorted(matches, key=lambda x: x.distance)
+        # matched_image = cv2.drawMatches(
+        #     self.query_frame, np.array(
+        #         [self.query_features['keypoints'][match.queryIdx] for match in matches]),
+        #     self.keyframe, np.array(
+        #         [self.keyframe_features['keypoints'][match.trainIdx] for match in matches]),
+        #     [cv2.DMatch(i, i, 0) for i in range(len(matches))][:100],
+        #     None,
+        #     matchColor=(0, 255, 0),  # Green color for inliers
+        #     singlePointColor=(255, 0, 0)  # Blue color for keypoints
+        #     )
 
-        points_3d = cv2.triangulatePoints(M_keyframe, M_query, p_keyframe, p_query)
+        # plt.imshow(matched_image)
+        # plt.show()
+        
+        #self.plot_map()
+
+        points_4d = cv2.triangulatePoints(M_keyframe, M_query, p_keyframe, p_query)
+        # Un-homogenize points
+        points_3d = (points_4d[:3, :] / points_4d[3, :]).T      # In world frame (verified)
+        # Discard points with positive z value
+        mask = np.where((points_3d[:, 2] > query_pose[2,3]) &
+                        (points_3d[:, 2] - query_pose[2,3] < self.max_distance_thresh)) #TODO: in fact rather the points "in front" not necessary z axis
+        points_3d = points_3d[mask]
         
         # Package 3D points and their descriptors
-        new_3d_points = np.zeros((points_3d.shape[1], 131)).astype(np.float32)
-        new_3d_points[:,:3] = (points_3d[:3, :] / points_3d[3, :]).T
+        new_3d_points = np.zeros((points_3d.shape[0], 131)).astype(np.float32)
+        new_3d_points[:,:3] = points_3d
         new_3d_points[:,3:] = np.array(
             [self.query_features["descriptors"][match.queryIdx]
-             for match in matches])
+             for match in matches])[mask]
         self.world_points_3d = np.vstack((self.world_points_3d, new_3d_points))
         self.num_keyframe_points_3d = points_3d.shape[0]
+        #self.plot_map()
+        
         
 
     def reprojectPoints(self, P, M, K):
@@ -537,7 +572,21 @@ class VO():
             
         else:
             raise ValueError("Please input a valid mode for. See visualize() definition.")
+        
+    def plot_map(self):
+        p_W_landmarks = np.array(self.poses)[:,:,3].T #TODO resize it to 3*N
+        p_W_frames = self.world_points_3d[:, :3].T
+        
+        
+        fig = plt.figure()
+        ax = fig.add_axes(111)
+        ax.plot(p_W_landmarks[2, :], -p_W_landmarks[0, :], '.')
+        ax.plot(p_W_frames[2, :], -p_W_frames[0, :], 'rx', linewidth=3)
 
+        ax.axis('equal')
+        ax.set_title("Trajectory and point cloud")
+        plt.show()
+        plt.pause(0.1)
 
 
     def read_calib_file_(self, path: str):
