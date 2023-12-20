@@ -23,4 +23,4 @@ def load_image_data(directory: str, filetype: str = 'png'):
     image_files = os.listdir(directory)
     image_files = [x for x in image_files if x.endswith(filetype)]
 
-    return image_files
+    return sorted(image_files)

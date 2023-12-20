@@ -19,24 +19,25 @@ if __name__ == '__main__':
     pose_exists = False
     
     # for i in range(1, len(image_files)):
-    for i in range(1, 10): # first use 10 frames
+    for i in range(1, 20): # first use 10 frames
         query_img = vo.read_image_(file=os.path.join(directory, image_files[i]))
         prev_img = vo.read_image_(file=os.path.join(directory, image_files[i - 1]))
 
        # Extract/store previous features first
-        vo.extract_features(image=prev_img, algorithm='sift')
-        prev_features = vo.query_features.copy()  # store features
+        prev_features = vo.extract_features(image=prev_img, algorithm='sift')
+        vo.keyframe_features = prev_features.copy()
+        # prev_features = vo.query_features.copy()  # store features
 
         # New call of VO class (we are working in relation to query image)
-        vo.extract_features(image=query_img, algorithm='sift')
+        vo.query_features = vo.extract_features(image=query_img, algorithm='sift')
         query_features = vo.query_features.copy()
-        
+        vo.query_frame = query_img
         
         # 8pt
         if pt_cloud_exists is False:
             
             matches2d2d = vo.match_features("2d2d", descriptor_prev=prev_features["descriptors"])
-
+            
             first_img_pt = np.array([prev_features["keypoints"][match.trainIdx].pt for match in matches2d2d])
             second_img_pt = np.array([query_features["keypoints"][match.queryIdx].pt for match in matches2d2d])
 
@@ -78,26 +79,31 @@ if __name__ == '__main__':
                 vo.world_points_3d = np.vstack((vo.world_points_3d, pruned_new_3d))
             pt_cloud_exists = True
             if pose_exists is False:
-                vo.poses = np.zeros((1,3,4))
-                vo.poses[0,:,:] = np.hstack((R,t))
+                vo.poses = np.zeros((3,4,1))
+                vo.poses[:,:,0] = np.hstack((R,t))
                 pose_exists = True
 
-            # Visualize
-            # Plot 2d2d matches
-            img3 = cv2.drawMatches(query_img, query_features["keypoints"], prev_img, prev_features["keypoints"],
-                               matches2d2d[:], None, flags=2) # displaying all matches
+            # CV2 Visualize 2d2d matches
+            # img3 = cv2.drawMatches(query_img, query_features["keypoints"], prev_img, prev_features["keypoints"],
+            #                    matches2d2d[:], None, flags=2) # displaying all matches
+            
+            # Our own visualizer
+            vo.visualize(mode='match', matches=matches2d2d)
 
         else:
-            
-            num_previous_descriptors = 50 # (Hardcoding for testing), trying to match 50 of existing 3D points to query points
-            matches3d2d = vo.match_features("3d2d", num_matches_previous=num_previous_descriptors)
+            vo.num_keyframe_points_3d = vo.world_points_3d.shape[0]
+            num_previous_descriptors = vo.world_points_3d.shape[0] # (Hardcoding for testing), trying to match 50 of existing 3D points to query points
+            matches3d2d = vo.match_features("3d2d", descriptor_prev=num_previous_descriptors)
 
-            object_points = np.array([vo.world_points_3d[-num_previous_descriptors:,:3][match.trainIdx] for match in matches3d2d])
+            object_points = np.array([vo.world_points_3d[:,:3][match.trainIdx] for match in matches3d2d])
             query_points = np.array([query_features["keypoints"][match.queryIdx] for match in matches3d2d])
             query_points_uv = np.array([query_features["keypoints"][match.queryIdx].pt for match in matches3d2d]) #extracted img pts
 
             success, rvec_C_W, t_C_W, inliers = cv2.solvePnPRansac(
                 object_points, query_points_uv, cameraMatrix=vo.K, distCoeffs=np.zeros((4,1)))
+            
+            print(f"number inliers PnP ransac: {len(inliers)}")
+
             if not success:
                 raise RuntimeError("RANSAC is not able to fit the model")
             
@@ -113,24 +119,24 @@ if __name__ == '__main__':
             # Write pose to self.poses
             build_M = np.hstack((R_C_W,t_C_W))
             if pose_exists is True:
-                vo.poses = np.vstack((vo.poses,np.reshape(build_M,(1,3,4)))) # currently vstacking poses. May change to dstack
+                vo.poses = np.dstack((vo.poses,np.reshape(build_M,(3,4,1))))
             else:
                 raise ValueError("P3P attempting to write pose to uninitialized pose database. 8pt pose should have been written first")
 
-            # Visualize
-            projected_3D_points = cv2.projectPoints(objectPoints=recover_inlier_3d_points, 
-                                                    rvec=vo.poses[-1,:3,:3], tvec=vo.poses[-1,:3,-1],
-                                                    cameraMatrix=vo.K, distCoeffs=None) # reprojects database 3d points into image plane
+            # FAIL @ reprojeting points (to be done by visualizer())
+            # projected_3D_points = cv2.projectPoints(objectPoints=recover_inlier_3d_points, 
+            #                                         rvec=vo.poses[:3,:3,-1], tvec=vo.poses[:3,-1,-1],
+            #                                         cameraMatrix=vo.K, distCoeffs=None) # reprojects database 3d points into image plane
             
-            # extract projectPoints output to get u,v. Can probably fix this with different datastructures?
-            projected_3D_points = np.hstack((projected_3D_points[0][:,:,0], projected_3D_points[0][:,:,1])) 
+            # # extract projectPoints output to get u,v. Can probably fix this with different datastructures?
+            # projected_3D_points = np.hstack((projected_3D_points[0][:,:,0], projected_3D_points[0][:,:,1])) 
+            
+            # Our own visualizer
+            vo.visualize(mode='match', matches=matches3d2d, project_points=True)
+            vo.visualize(mode='traj2d')
+            b=2
 
-            # # NOTE/TODO fails, can't read projected_3D_points since not cv2.Keypoint dtype
-            # img3 = cv2.drawMatches(query_img, recover_inlier_2d_points, 
-            #                        prev_img, projected_3D_points,
-            #                        matches3d2d, None, flags=2)
+        # cv2.imshow('2d2d SFM then 3d2d Matching', img3)
+        # cv2.waitKey(1000)
 
-        cv2.imshow('2d2d SFM then 3d2d Matching', img3)
-        cv2.waitKey(1000)
-
-    cv2.destroyAllWindows()
+    # cv2.destroyAllWindows()
