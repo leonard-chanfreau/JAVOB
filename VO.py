@@ -39,7 +39,7 @@ class VO():
                                 # dynamic storage of triangulated 3D points in world frame and their descriptors (npoints x 128 np.ndarray)
         self.num_keyframe_points_3d = None
 
-        self.poses = [np.hstack([np.eye(3), np.zeros((3,1))])]# list(np.ndarray(3 x 4 x nimages)) where 3x4 is [R_W_C|t_W_C] projection matrix
+        self.poses = [np.hstack([np.eye(3), np.zeros((3,1))])]# list(3x4 array) where 3x4 is [R_W_C|t_W_C] projection matrix
 
         # internal state
         self.iteration = 0
@@ -157,7 +157,6 @@ class VO():
                 self.keyframe_features = self.extract_features(image=image, algorithm="sift")
             self.iteration += 1
             return
-        #self.plot_map()
 
         # continuous run
         # extract features and find matches between self.query_features
@@ -172,6 +171,9 @@ class VO():
         
         print(f"#Inliers : {num_inliers}")
         self.iteration += 1
+        
+        self.visualize(mode='match', matches=matches)
+        self.visualize(mode="traj2d")
         
         #if self.iteration > 25:
             #self.plot_map()
@@ -590,9 +592,9 @@ class VO():
                 fig = plt.gcf()
                 traj = fig.add_subplot(111)
 
-            proj_mat = np.transpose(self.poses, (2, 0, 1))
+            proj_mat = np.array(self.poses)
             # NOTE trajectory Z needs to be multiplied by -1 
-            traj.plot(proj_mat[:, 0, 3], -proj_mat[:, 2, 3], label='Trajectory')
+            traj.plot(proj_mat[:, 0, 3], proj_mat[:, 2, 3], label='Trajectory')
             traj.set_xlabel('X')
             traj.set_ylabel('Z')
 
