@@ -89,6 +89,7 @@ class VO():
         # Database storage
         self.world_points_3d = None
         self.num_points_3d = None
+        self.num_matches_previous = 300 # TODO: verify if it works and doc
         self.poses = [np.hstack([np.eye(3), np.zeros((3,1))])]
         # internal state
         self.iteration = 0
@@ -107,9 +108,6 @@ class VO():
         ----------
         image: np.ndarray
             New incoming frame.
-        Returns
-        -------
-
         '''
         # Set parameters
         # inliers threshold -> activate re-triangulation
@@ -142,8 +140,8 @@ class VO():
         
         # Visualization
         print(f"#Inliers : {num_inliers}")
-        self.visualize(mode='match', matches=matches)
-        self.visualize(mode="traj2d")
+        self.display_matches(matches)
+        self.display_traj_2d()
 
         # Check if enough inliers are found,
         if num_inliers < thresh_inliers: # TODO: Maybe rather a percentage of point cloud
@@ -164,10 +162,6 @@ class VO():
         ----------
         image: np.ndarray
             Query image
-
-        Returns
-        -------
-
         """
         # Set threshold for average depth
         # TODO hyperparam dict
@@ -196,7 +190,7 @@ class VO():
 
     def extract_features(self, image, algorithm: str = "sift"):
         '''
-        Extract 2d features from an image using the choosen algorithm (SIFT by
+        Extract 2d features from an image using the chosen algorithm (SIFT by
         default).
 
         Parameters
@@ -239,8 +233,12 @@ class VO():
         #TODO: store query image descriptors in self.world_points_3d ---> THIS MAY GO IN TRIANGULATE() function
 
 
-    def match_features(self, method: str, descriptor_prev=None):
+    def match_features(
+        self, method: str, descriptor_prev=None) -> List[cv2.DMatch]:
         '''
+        Match query features with train features (= 3d features of the database
+        or 2d features from the keyframe passed as arg) based on their proximity.
+        
         Parameters
         ----------
         method: str
@@ -249,9 +247,6 @@ class VO():
             Train image feature descriptors.\n
             Used when method is '2d2d' to pass the descriptor of the train
             image.
-        num_matches_previous (for 3d2d only): int
-            Number of 3D world points to match new query (keyframe) to.\n
-            For example, set equal to len(self.query_features)
 
         Comments
         --------
@@ -271,24 +266,19 @@ class VO():
         '''
         # Select the correct method.
         if method == '2d2d':
-            # Descriptors from a previous train image are expected.
-            if descriptor_prev is None:
-                raise ValueError(
-                    "For '2d2d' retrieval, provide descriptor_prev.")
+            # Select keyframe descriptors.
+            descriptor_prev = self.keyframe_features['descriptors']
         elif method == '3d2d':
             # Select num_matches_previous descriptors from the 3d point cloud
-            if num_matches_previous is None:
-                raise ValueError(
-                    "Please set a valid number of matches to create. Value must"
-                    " be positive.")
-            descriptor_prev = self.world_points_3d[-num_matches_previous:, 3:]
+            descriptor_prev = \
+                self.world_points_3d[-self.num_matches_previous:, 3:]
         else:
             raise ValueError("Invalid retrieval method. Use '2d2d' or '3d2d'.")
         # Match descriptors with query image descriptors
         bf = cv2.BFMatcher(normType=cv2.NORM_L1, crossCheck=True)
         return bf.match(self.query_features["descriptors"], descriptor_prev)
 
-    def estimate_camera_pose(self, matches: Tuple[cv2.DMatch]):
+    def estimate_camera_pose(self, matches: Tuple[cv2.DMatch]) -> int:
         # TODO: maybe find a way to avoid passing matches (huge list) as an
         # argument (make it member of the class?)
         '''
@@ -299,61 +289,49 @@ class VO():
         
         Parameters
         ----------
-            matches: Tuple[cv2.DMatch]
-                Structure containing the matching information between
-                self.query_features, and self.world_points_3d.
+        matches: Tuple[cv2.DMatch]
+            Structure containing the matching information between query_features
+            and world_points_3d.
 
         Returns
         -------
-            num_inliers: int
-                Number of inliers used by RANSAC to compute the camera pose.
-            todo. engelbracht: idea: just return the pose, its appended in run?
+        num_inliers: int
+            Number of inliers used by RANSAC to compute the camera pose.
+        TODO engelbracht: idea: just return the pose, its appended in run?
         '''
         # Retrieve matched 2D/3D points.
-        matches_array = np.array([(match.queryIdx, match.trainIdx+len(self.world_points_3d)-self.num_points_3d) for match in matches])
-        train_object_points = self.world_points_3d[matches_array[:,1], 0:3]       # 3D pt (Nx3)
-        # image_points = self.query_features["keypoints"][matches_array[:,0]]  # 2D pt (Nx2)
-        query_image_points = np.array([self.query_features['keypoints'][match.queryIdx].pt for match in matches])
-
-        # Run PnP
+        # Compute the offset in matching due to the fact that we only compare
+        # the query features with the N last features of the database.
+        matching_train_offset = self.num_points_3d - self.num_matches_previous
+        matches_array = np.array(
+            [(match.queryIdx, match.trainIdx + matching_train_offset)
+             for match in matches])
+        train_object_points = \
+            self.world_points_3d[matches_array[:,1], 0:3]          # 3D pt (Nx3)
+        query_image_points = np.array(
+            [self.query_features['keypoints'][match.queryIdx].pt
+             for match in matches])                                # 2D pt (Nx2)
+        # Run PnP algorithm
         success, rvec_C_W, t_C_W, inliers = cv2.solvePnPRansac(
             train_object_points, query_image_points,
             cameraMatrix=self.K, distCoeffs=np.zeros((4,1)))
-        
-        # if self.iteration > 26:
-        #     R = self.keyframe_pos[:, :3].T
-        #     t = -R@self.keyframe_pos[:, 3].reshape(3, 1)
-        #     projected_points, _ = cv2.projectPoints(train_object_points, R, t, self.K, None)
-        #     projected_points = np.squeeze(projected_points)
-        #     matched_image = cv2.drawMatches(
-        #         self.query_frame, np.array([self.query_features["keypoints"][match.queryIdx] for match in matches]),
-        #         self.keyframe, np.array([cv2.KeyPoint(projected_points[i,0], projected_points[i,1], 5) for i in range(projected_points.shape[0])]),
-        #         [cv2.DMatch(i[0], i[0], 0) for i in inliers][:10],
-        #         None,
-        #         matchColor=(0, 255, 0),  # Green color for inliers
-        #         singlePointColor=(255, 0, 0)  # Blue color for keypoints
-        #     )
-
-        #     plt.imshow(matched_image)
-        #     plt.show()
-        
+        # Catch errors
         if not success:
             raise RuntimeError("RANSAC is not able to fit the model")
-
-        # Extract rotation matrix
+        # Extract rotation matrix from rotation vec resulting of PnP
         R_C_W, _ = cv2.Rodrigues(rvec_C_W)
         # Invert to have camera pose in world frame
         R_W_C = R_C_W.T
         t_W_C = -R_W_C @ t_C_W
         # Construct pose matrix
         T_W_C = np.hstack([R_W_C, t_W_C])
-        # return the pose and the number of points used to estimate the latter
+        # Return the pose and the number of points used to estimate the latter
         return T_W_C, inliers.size
 
     def compute_pose_and_3D_pts(
             self, query_feature: Dict[tuple[cv2.Feature2D], np.ndarray],
             train_feature: Dict[tuple[cv2.Feature2D], np.ndarray],
-            matches: tuple[cv2.DMatch]):
+            matches: tuple[cv2.DMatch]) -> (np.ndarray, np.ndarray):
         # TODO: Maybe these arguments should be members of the class.
         '''
         Compute the camera pose and construct a point cloud using 8-pt algorithm
@@ -363,80 +341,78 @@ class VO():
         
         Parameters
         ----------
-        query_feature: dict of "features" and "descriptor"
-        train_feature: dict of "features" and "descriptor"
+        query_feature: dict
+            Features of the query image ("keypoints" and "descriptor")
+        train_feature: dict
+            Features of the train image ("keypoints" and "descriptor")
         matches: List[cv2.DMatch]
+            Structure containing the matching information between query_features
+            and world_points_3d.
 
         Returns
         -------
+        pose: np.ndarray [3 x 4]
+            Query camera pose (transformation between the two cameras).
+        features_3d: np.ndarray [N x 131]
+            Triangulated 3d features.
 
         '''
         # Retrieve matched 2D/2D points.
+        train_img_pt = np.array(
+            [train_feature['keypoints'][match.trainIdx].pt for match in matches])
+        query_img_pt = np.array(
+            [query_feature['keypoints'][match.queryIdx].pt for match in matches])
+        # Retrieve query image descriptors
         matches_array = np.array(
             [(match.queryIdx, match.trainIdx) for match in matches])
-        first_img_pt = np.array([train_feature['keypoints'][match.trainIdx].pt for match in matches])
-        second_img_pt = np.array([query_feature['keypoints'][match.queryIdx].pt for match in matches])
-        second_img_descriptor = query_feature["descriptors"][matches_array[:, 0]]
-
-        # Compute essential matrix.
+        query_img_descriptor = query_feature["descriptors"][matches_array[:, 0]]
+        # Compute essential matrix from correspondences using 8-pt algorithm.
         E, essential_inliers = cv2.findEssentialMat(
-            points1=first_img_pt, points2=second_img_pt,
+            points1=train_img_pt, points2=query_img_pt,
             cameraMatrix=self.K,
             method=cv2.RANSAC, prob=0.99, threshold=1.0)
-
-        # Extract pose from it.
-        retVal, R_C_W, t_C_W, inlier_mask, triangulatedPoints = cv2.recoverPose(
+        # Extract the pose from it.
+        retVal, R_C_W, t_C_W, inlier_mask, points_4d = cv2.recoverPose(
                             E=E,
-                            points1=first_img_pt,
-                            points2=second_img_pt,
+                            points1=train_img_pt,
+                            points2=query_img_pt,
                             cameraMatrix=self.K,
                             mask=essential_inliers,
                             distanceThresh=self.max_distance_thresh)
-        # Convert it to camera pose in world frame
+        # Convert it to camera pose in world frame.
         R_W_C = R_C_W.T
         t_W_C = -R_W_C @ t_C_W
-
+        pose = np.hstack((R_W_C, t_W_C))
         # Create 3D feature concatenating normalized triangulated points and
         # descriptors.
-        norm_triangulated_points = (triangulatedPoints[:-1] / triangulatedPoints[3, :]).T
-        feature_3d = np.hstack((norm_triangulated_points,
-                               second_img_descriptor))
-
-        # Remove outliers and populate point cloud
+        points_3d = (points_4d[:3, :] / points_4d[3, :]).T
+        feature_3d = np.hstack((points_3d, query_img_descriptor))
+        # Remove outliers.
         feature_3d = feature_3d[np.where(inlier_mask[:,0] == 1)].astype("float32")
-        
-        pose = np.hstack((R_W_C, t_W_C))
-        
+        # Return camera pose and triangulated 3d features.
         return pose, feature_3d
 
-    def check_num_inliers(self):
+    def triangulate_new_points(
+        self, query_pose: np.ndarray, matches: Tuple[cv2.DMatch]):
         '''
-
-        Returns
-        -------
-
-        '''
-        pass
-
-    def triangulate_new_points(self, query_pose, matches):
-        '''
+        Triangulates new 3D points in the scene using the last keyframe and the
+        query image.\n
+        Same working principle as stereo cameras.
+        
         Parameters
         ----------
-        - M_keyframe: 3x4 projection matrix of the first camera (Last Keyframe).
-        - M_query: 3x4 projection matrix of the second camera (Query image).
-        - P_keyframe: 2xN array of feature points in the first image (Last Keyframe). 
-            - It can be also a cell array of feature points {[x,y], ...}
-        - P_query: 2xN array of corresponding points in the second image (Query image).
-            - It can be also a cell array of feature points {[x,y], ...}
+        query_pose: np.ndarray [3 x 4]
+            Pose of the first camera (Last Keyframe).
+        matches: Tuple[cv2.DMatch]
+            Structure containing the matching information between query_features
+            and world_points_3d.
+            
         Comments
         -------
-        Triangulates new 3D points in the scene using the last keyframe and the query image. Should not be called 
-        every frame, only when we are triangulating new 3D features.
-        Returns
-        -------
-        points_3d: 4xN array of reconstructed points in homogeneous coordinates [[x;y;z;w], ...]
+        Should not be called  at every frame, only when we are triangulating new
+        3D features.
         '''
-        # Construct projections matrices: project 3D world point into the images
+        # Construct projections matrices = project 3D world point into the image
         keyframe_R_C_W = self.keyframe_pos[:,:3].T
         keyframe_t_C_W = - keyframe_R_C_W @ self.keyframe_pos[:,3:]
         M_keyframe = self.K @ np.hstack((keyframe_R_C_W, keyframe_t_C_W))
@@ -451,107 +427,70 @@ class VO():
         p_query = np.array(
             [self.query_features['keypoints'][match.queryIdx].pt
              for match in matches[:250]]).T
-        # TODO: dont know if all matches are reliable
-        
-        # matches = sorted(matches, key=lambda x: x.distance)
-        # matched_image = cv2.drawMatches(
-        #     self.query_frame, np.array(
-        #         [self.query_features['keypoints'][match.queryIdx] for match in matches]),
-        #     self.keyframe, np.array(
-        #         [self.keyframe_features['keypoints'][match.trainIdx] for match in matches]),
-        #     [cv2.DMatch(i, i, 0) for i in range(len(matches))][:100],
-        #     None,
-        #     matchColor=(0, 255, 0),  # Green color for inliers
-        #     singlePointColor=(255, 0, 0)  # Blue color for keypoints
-        #     )
-
-        # plt.imshow(matched_image)
-        # plt.show()
-        
-        #self.plot_map()
-
-        points_4d = cv2.triangulatePoints(M_keyframe, M_query, p_keyframe, p_query)
-        # Un-homogenize points
-        points_3d = (points_4d[:3, :] / points_4d[3, :]).T      # In world frame (verified)
+        # Triangulate those points using projection matrices.
+        points_4d = cv2.triangulatePoints(
+            M_keyframe, M_query, p_keyframe, p_query)
+        # Un-homogenize points in world frame (-> verified)
+        points_3d = (points_4d[:3, :] / points_4d[3, :]).T
         # Discard points with positive z value
+        # TODO: in fact rather the points "in front / behind" not necessary z axis
         mask = np.where((points_3d[:, 2] > query_pose[2,3]) &
-                        (points_3d[:, 2] - query_pose[2,3] < self.max_distance_thresh)) #TODO: in fact rather the points "in front" not necessary z axis
+                        (points_3d[:, 2] - query_pose[2,3] < self.max_distance_thresh))
         points_3d = points_3d[mask]
-        
         # Package 3D points and their descriptors
         new_3d_points = np.zeros((points_3d.shape[0], 131)).astype(np.float32)
         new_3d_points[:,:3] = points_3d
         new_3d_points[:,3:] = np.array(
             [self.query_features["descriptors"][match.queryIdx]
              for match in matches])[mask]
+        # Augment database.
         self.world_points_3d = np.vstack((self.world_points_3d, new_3d_points))
         self.num_points_3d = points_3d.shape[0]
-        #self.plot_map()
-        
-        
 
-    def reprojectPoints(self, P, M, K):
+    def reprojectPoints(
+        self, P: np.ndarray, pose: np.ndarray, K: np.ndarray) -> np.ndarray:
         '''
-        Reproject 3D points given a projection matrix. From ex02 (PnP)\n
+        Reproject 3D points given a projection matrix (c.f. ex02 (PnP)).
         
         Parameters
         ----------
-            P: [N x 3] 
-                Coordinates of the 3d points in the world frame
-            M: [3 x 4] projection matrix
-            K: [3 x 3] camera matrix
+        P: np.ndarray [N x 3]
+            Coordinates of the 3d points in the world frame
+        pose: np.ndarray [3 x 4]
+            Camera Pose
+        K: np.ndarray [3 x 3]
+            Calibration matrix
 
         Returns
         -------
-            [n x 2] image coordinates of the reprojected points
+        points_2d: np.ndarray [n x 2]
+            Image coordinates of the reprojected points
         '''
-        p_homo = (K @ M @ np.r_[P.T, np.ones((1, P.shape[0]))]).T
+        p_homo = (K @ pose @ np.r_[P.T, np.ones((1, P.shape[0]))]).T
         return p_homo[:,:2]/p_homo[:,2,np.newaxis]
 
-    def visualize(self, mode: str, matches=None, project_points=False):
+    def display_matches(
+        self, matches: Tuple[cv2.DMatch], project_points:bool =False):
         '''
+        Display the query image inlier feature matches overlaid on image.
         Parameters
         -------
-        mode: str
-            'match': 
-                Visualizes the query image inlier feature 
-                matches overlaid on image. 
-                Must provide matches: Tuple[cv2.DMatch].
-                Setting project_points=True allowed to visualize world 3D point 
-                projections in camera
-            'traj2d'
-                RECOMMENDED
-                2D top-down view of trajectory and point cloud.
-            'traj3d' 
-                NOTE: NOT recommended
-                Attempt at using pytransform3d library. Somewhat works but can't
-                see global view of traj and pt cloud.
-                Visualizes the query frame camera pose and the trajectory of
-                previous poses
-            
         matches: Tuple[cv2.DMatch]
-            Required for 'match' mode. 
-            List of correspondances between. 
-            vizualize() only reads the queryIdx of the correspondances in order
-            to determine u,v locations for inliers.
-
+            Required for 'match' mode.
+            Structure containing the matching information between query_features
+            and world_points_3d.
         project_points (optional): bool
-            Optional for 'match' mode.
             Default is False. If True, project all self.world_3d_points into 
-            the camera frame.
+            the camera frame. \n
             TODO: trim down number of 3D points to project into the scene each 
             time this is called
 
-
         Comments
         -------
-        NOTE: vizualize() should be called AFTER query pose is written. This is
-        so that when projecting 3D world points into the image, we use the
-        query image pose.
-
-        Poses are in world frame (first image frame). (TODO: agree on this)
-
-        NOTE for future development
+        - Should be called AFTER query pose is written. This is so that when
+        projecting 3D world points into the image, we use the query image pose.
+        
+        TODO for future development
         - 'mask' mode (maybe helpful to visualize specific masks)
         - Plot dashboard: (some of these are nice-to-have)
             Image plots
@@ -571,184 +510,79 @@ class VO():
             gt (optional): str
                     Path to config file 
                     (check format of ground truth)
-        
-        Returns
-        -------
         '''
-
-        if mode == 'match':
-            if matches is None:
-                raise ValueError("Please input match correspondances \
-                                 (Tuple[cv2.DMatch]) when using 'match' mode.")
-            match_plot_num = 1 # to not overwrite other figs
-
-            plt.figure(match_plot_num)
-            plt.figure(match_plot_num).clf() # clears last "features_all" points
-            plt.ion()  # interactive mode on for dynamic updating
-
-            im = self.query_image
-            implot = plt.imshow(im)
-            padding = 50 # whitespace padding when visualizing data
-
-            features_matched = np.array([self.query_features['keypoints'][match.queryIdx].pt for match in matches])
-            features_all = np.asarray(cv2.KeyPoint_convert(self.query_features['keypoints']))
-            
-            # All features in red, matched features in green
-            plt.scatter(x=features_all[:,0], y=features_all[:,1], c='r', s=9, marker='x')
-            plt.scatter(x=features_matched[:,0], y=features_matched[:,1], c='lime', s=9, marker='x')
-
-            # Optional param. 
-            # Projects ALL point cloud features as cyan circle into frame
-            if project_points is True:
-                # Our own reprojectPoints() function works
-                points = self.reprojectPoints(self.world_points_3d[:,:3], 
-                                              self.poses[:,:,-1], 
-                                              self.K)
-                plt.scatter(x=points[:,0], 
-                            y=points[:,1], 
-                            s=20, 
-                            facecolors='none', 
-                            edgecolors='cyan')
-
-                # # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-                # # Attempting cv2.projectPoints implementation. 
-                # # Still fails, returns NaN
-                # projected_points, _ = cv2.projectPoints(\
-                #     objectPoints=self.world_points_3d[:,:3].copy(), 
-                #     rvec=self.poses[:,:3,-1], 
-                #     tvec=self.poses[:,-1,-1], 
-                #     cameraMatrix=self.K,
-                #     distCoeffs=np.empty((1,4)))
-                # projected_points = np.squeeze(projected_points)
-                # plt.scatter(x=projected_points[:,0], y=projected_points[:,1], \
-                #             marker='x', s=20, edgecolors='fuchsia')
-                # # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-            
-            # Visualize image with whitespace padding
-            plt.xlim(-padding, im.shape[1] + padding)
-            plt.ylim(im.shape[0] + padding, -padding)
-            plt.draw()
-            plt.pause(0.001)
-            plt.ioff()  # interactive mode off after updating
+        # Give an id to the figure to not overwrite other figs.
+        match_fig_id = 1
+        # Create figure.
+        plt.figure(match_fig_id)
+        # Clear last "features_all" points.
+        plt.figure(match_fig_id).clf()
+        # Activate interactive mode for dynamic updating.
+        plt.ion()
+        # Display image
+        im = self.query_image
+        plt.imshow(im)
+        # Create 2d points arrays.
+        matched_keypoints = np.array(
+            [self.query_features['keypoints'][match.queryIdx].pt
+             for match in matches])
+        all_keypoints = np.asarray(
+            cv2.KeyPoint_convert(self.query_features['keypoints']))
+        # Plot all keypoints in red and matched features in green.
+        plt.scatter(x=all_keypoints[:,0], y=all_keypoints[:,1],
+                    c='r', s=9, marker='x')
+        plt.scatter(x=matched_keypoints[:,0], y=matched_keypoints[:,1],
+                    c='lime', s=9, marker='x')
+        if project_points:
+            # Projects ALL point cloud features. TODO: maybe use cv func
+            points = self.reprojectPoints(self.world_points_3d[:,:3], 
+                                            self.poses[:,:,-1], 
+                                            self.K)
+            # Plot them as cyan circle into frame.
+            plt.scatter(x=points[:,0], y=points[:,1], 
+                        s=20, facecolors='none', edgecolors='cyan')
+        # Add whitespace padding
+        padding = 50
+        plt.xlim(-padding, im.shape[1] + padding)
+        plt.ylim(im.shape[0] + padding, -padding)
+        plt.draw()
+        plt.pause(0.001)
+        # Set interactive mode to off after updating
+        plt.ioff()
         
-        elif mode == 'traj2d':
-            #TODO later: plot new 3d points in blue, old 3d points in different shade.
-                # NOTE ENSURE points are in world frame. triangulatePoints() triangulates in left camera frame
-                # TODO ENSURE correct planes (world points and R|T need to be mapped properly)
-            
-            traj_plot_number = 2 # to not overwrite 'match'
-
-            if not plt.fignum_exists(traj_plot_number):
-                plt.ion()  # Turn on interactive mode for dynamic updating
-                fig = plt.figure(num=traj_plot_number, figsize=(7, 6))
-                traj = fig.add_subplot(111)
-            else:
-                # If figure exists, clear plot
-                plt.figure(traj_plot_number).clf()
-                fig = plt.gcf()
-                traj = fig.add_subplot(111)
-
-            proj_mat = np.array(self.poses)
-            # NOTE trajectory Z needs to be multiplied by -1 
-            traj.plot(proj_mat[:, 0, 3], proj_mat[:, 2, 3], label='Trajectory')
-            traj.set_xlabel('X')
-            traj.set_ylabel('Z')
-
-            x_world = self.world_points_3d[:, 0]
-            # y_world = self.world_points_3d[:, 1]
-            z_world = self.world_points_3d[:, 2]
-            traj.scatter(x_world, z_world, color='red', label='World Points')
-
-            traj.legend()
-
-            plt.draw()
-            plt.pause(0.001)
-
-            # # OLD NOTES TO COME BACK TO
-            # Plot pose
-            # num_poses = len(self.poses)
-            # pose_figsize=(7, 8)
-            # _, ax = plt.subplots(figsize=pose_figsize)
-            
-            # for i, pose in enumerate(self.poses):
-            #     # Extract translation
-            #     xy = pose[:,-1]
-
-            #     # Ground plane in camera xz plane, 3D points in world frame
-        
-        elif mode == 'traj3d':
-
-            # TESTING PYTRANSFROM3D ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-            # transpose() changes dstack (3x3xN) to vstack (Nx3x3)
-            pose_rot_mat = R.from_matrix(np.transpose(self.poses[:3,:3,:], (2, 0, 1))) 
-            # Convert [R|t] to quaternion (Nx4)
-            quat = R.as_quat(pose_rot_mat)
-
-            quat = quat[:, (3,0,1,2)] # xyzw to wxyz format
-            # does same as pr.quaternion_wxyz_from_xyzw()
-            
-            # Creating N x (x, y, z, qw, qx, qy, qz)
-            pose_quat = np.hstack((np.transpose(self.poses[:3,-1,:]), quat))
-    
-            cam2world_trajectory = ptr.transforms_from_pqs(pose_quat)
-
-            fig = plt.figure(figsize=(8, 8))
-            ax = fig.add_subplot(111, projection='3d')  # Create a 3D subplot
-
-            # Plot camera trajectory
-            ax = pt.plot_transform(ax, s=0.3)  # Use the same axis for the camera trajectory
-            ax = ptr.plot_trajectory(ax, P=pose_quat, s=0.1, n_frames=10)
-
-            # image_size = np.array([1920, 1440])
-            key_frames_indices = np.linspace(0, len(pose_quat) - 1, 10, dtype=int)
-            colors = cycle("rgb")
-            for i, c in zip(key_frames_indices, colors):
-                pc.plot_camera(ax, self.K, cam2world_trajectory[i],
-                            sensor_size=self.query_image.shape, virtual_image_distance=0.2, c=c)
-
-            # Set limits and view for camera trajectory
-            pos_min = np.min(pose_quat[:, :3], axis=0)
-            pos_max = np.max(pose_quat[:, :3], axis=0)
-            center = (pos_max + pos_min) / 2.0
-            max_half_extent = max(pos_max - pos_min) / 2.0
-            ax.set_xlim((center[0] - max_half_extent, center[0] + max_half_extent))
-            ax.set_ylim((center[1] - max_half_extent, center[1] + max_half_extent))
-            ax.set_zlim((center[2] - max_half_extent, center[2] + max_half_extent))
-
-            latest_pose = pose_quat[-1, :3]  # Extract translation from the latest pose
-            ax.view_init(azim=-90, elev=0)  # Top-down (XZ) view
-
-            # Plot 3D point cloud on the same plot centered around the latest pose
-            x = self.world_points_3d[:, 0] - latest_pose[0]
-            y = self.world_points_3d[:, 1] - latest_pose[1]
-            z = self.world_points_3d[:, 2] - latest_pose[2]
-            ax.scatter(x, y, z)
-
-            plt.show()
-            # END TESTING PYTRANSFROM3D ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-        
+    def display_traj_2d(self):
+        '''
+        Display 2D top-down view of trajectory and point cloud.
+        '''
+        # Give an id to the figure to not overwrite other figs.
+        traj_fig_number = 2
+        if not plt.fignum_exists(traj_fig_number):
+            # Turn on interactive mode for dynamic updating.
+            plt.ion()
+            fig = plt.figure(num=traj_fig_number, figsize=(7, 6))
         else:
-            raise ValueError("Please input a valid mode for. See visualize() definition.")
-        
-    def plot_map(self):
-        p_W_landmarks = np.array(self.poses)[:,:,3].T #TODO resize it to 3*N
-        p_W_frames = self.world_points_3d[:, :3].T
-        
-        
-        fig = plt.figure()
-        ax = fig.add_axes(111)
-        ax.plot(p_W_landmarks[2, :], -p_W_landmarks[0, :], '.')
-        ax.plot(p_W_frames[2, :], -p_W_frames[0, :], 'rx', linewidth=3)
+            # If figure exists, clear plot.
+            plt.figure(traj_fig_number).clf()
+            fig = plt.gcf()
+        traj = fig.add_subplot(111)
+        # Plot projected poses in 2D top-down view.
+        poses = np.array(self.poses)
+        traj.plot(poses[:, 0, 3], poses[:, 2, 3], label='Trajectory')
+        traj.set_xlabel('X')
+        traj.set_ylabel('Z')
+        # Plot projected 3D database points in 2D top-down view.
+        x_world = self.world_points_3d[:, 0]
+        z_world = self.world_points_3d[:, 2]
+        traj.scatter(x_world, z_world, color='red', label='World Points')
+        # Draw figure.
+        traj.legend()
+        plt.draw()
+        plt.pause(0.001)
 
-        ax.axis('equal')
-        ax.set_title("Trajectory and point cloud")
-        plt.show()
-        plt.pause(0.1)
 
-
-    def read_calib_file_(self, path: str):
+    def read_calib_file_(self, path: str) -> np.ndarray:
         '''
-        read calibration file to get camera intrinsics
+        Read calibration file to get camera intrinsics
 
         Parameters
         ----------
@@ -757,23 +591,18 @@ class VO():
 
         Returns
         -------
-        K: np.ndarray (3 x 3)
+        K: np.ndarray [3 x 3]
             contains the intrinsic camera matrix
         '''
-        # read calib file
+        # Read calib file
         K = np.genfromtxt(path)
-
-        # select only first (left) cam, reshape and trim
-        #todo: this is hardcoded as fuck
+        # Select only first (left) cam, reshape and trim
+        # TODO: this is hardcoded as fuck
         K = K[0,1:].reshape((3,4))[:,:-1]
-
         return K
 
     def read_image_(self, file: str):
-
         image = cv2.imread(filename=file)
-
         if image is None:
             raise ValueError('image could not be read. Check path and filename.')
-
         return image

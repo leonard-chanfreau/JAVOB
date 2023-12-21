@@ -88,7 +88,7 @@ if __name__ == '__main__':
             #                    matches2d2d[:], None, flags=2) # displaying all matches
             
             # Our own visualizer
-            vo.visualize(mode='match', matches=matches2d2d)
+            vo.display_matches(matches=matches2d2d)
 
         else:
             vo.num_points_3d = vo.world_points_3d.shape[0]
@@ -132,8 +132,8 @@ if __name__ == '__main__':
             # projected_3D_points = np.hstack((projected_3D_points[0][:,:,0], projected_3D_points[0][:,:,1])) 
             
             # Our own visualizer
-            vo.visualize(mode='match', matches=matches3d2d, project_points=True)
-            vo.visualize(mode='traj2d')
+            vo.display_matches(matches=matches3d2d, project_points=True)
+            vo.display_traj_2d()
             b=2
 
         # cv2.imshow('2d2d SFM then 3d2d Matching', img3)
