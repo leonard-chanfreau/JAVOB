@@ -44,6 +44,9 @@ class VO():
         # internal state
         self.iteration = 0
 
+        # DEBUG TODO DELETE
+        self.debug = False
+
         # implemented feature extraction algorithms and their hyper params
         self.feature_extraction_algorithms_config = {
             'sift': {
@@ -168,12 +171,23 @@ class VO():
         # estimate cam pose
         pose, num_inliers = self.estimate_camera_pose(matches=matches)
         self.poses.append(pose)
+
+        # DEBUG
+        last_pose = np.array(self.poses)[-1,:,:]
+        before_last_pose = np.array(self.poses)[-2,:,:]
+        raw_travel = before_last_pose[:,3] - last_pose[:,3]
+        print(f"raw travel: {raw_travel}")
+        travel = np.linalg.norm(before_last_pose[:,3] - last_pose[:,3])
+        print(f"dist travel: {travel}")
+        if travel > 1:
+            b=2
         
         print(f"#Inliers : {num_inliers}")
         self.iteration += 1
         
         self.visualize(mode='match', matches=matches)
-        self.visualize(mode="traj2d")
+        self.visualize(mode="traj2d", centered=True)
+        b=2
         
         #if self.iteration > 25:
             #self.plot_map()
@@ -417,9 +431,18 @@ class VO():
         points_4d = cv2.triangulatePoints(M_keyframe, M_query, p_keyframe, p_query)
         # Un-homogenize points
         points_3d = (points_4d[:3, :] / points_4d[3, :]).T      # In world frame (verified)
-        # Discard points with positive z value
-        mask = np.where((points_3d[:, 2] > query_pose[2,3]) &
-                        (points_3d[:, 2] - query_pose[2,3] < self.max_distance_thresh)) #TODO: in fact rather the points "in front" not necessary z axis
+        
+        # Project into camera view
+        points_3d_c = np.transpose(query_pose[:3,:3] @ points_3d.T  + np.expand_dims(query_pose[:,-1],1))
+        
+        # mask = np.where((points_3d[:, 2] > query_pose[2,3]) &
+        #                 (points_3d[:, 2] - query_pose[2,3] < self.max_distance_thresh)) #TODO: in fact rather the points "in front" not necessary z axis
+        
+        # This mask works best. 
+        # Discards points with negative z value IN CAMERA VIEW
+        mask = np.where((points_3d_c[:, 2] > 0) & 
+                        (points_3d_c[:, 2] < self.max_distance_thresh))
+        
         points_3d = points_3d[mask]
         
         # Package 3D points and their descriptors
@@ -452,7 +475,7 @@ class VO():
         p_homo = (K @ M @ np.r_[P.T, np.ones((1, P.shape[0]))]).T
         return p_homo[:,:2]/p_homo[:,2,np.newaxis]
 
-    def visualize(self, mode: str, matches=None, project_points=False):
+    def visualize(self, mode: str, matches=None, project_points=False, centered=False):
         '''
         Parameters
         -------
@@ -485,6 +508,11 @@ class VO():
             the camera frame.
             TODO: trim down number of 3D points to project into the scene each 
             time this is called
+        
+        centered (optional): bool
+            Optional for 'traj2d' mode.
+            Default is False. If True, keeps the query pose in the frame center
+            when plotting trajecotry and point cloud.
 
 
         Comments
@@ -543,10 +571,14 @@ class VO():
 
             # Optional param. 
             # Projects ALL point cloud features as cyan circle into frame
+
+            # TODO rotation causes points to reproj wrong way.
+                # Also only project points in FRONT of frame??
+            
             if project_points is True:
                 # Our own reprojectPoints() function works
                 points = self.reprojectPoints(self.world_points_3d[:,:3], 
-                                              self.poses[:,:,-1], 
+                                              np.array(self.poses)[-1,:,:], 
                                               self.K)
                 plt.scatter(x=points[:,0], 
                             y=points[:,1], 
@@ -577,8 +609,7 @@ class VO():
         
         elif mode == 'traj2d':
             #TODO later: plot new 3d points in blue, old 3d points in different shade.
-                # NOTE ENSURE points are in world frame. triangulatePoints() triangulates in left camera frame
-                # TODO ENSURE correct planes (world points and R|T need to be mapped properly)
+                # NOTE points are in world frame
             
             traj_plot_number = 2 # to not overwrite 'match'
 
@@ -592,16 +623,32 @@ class VO():
                 fig = plt.gcf()
                 traj = fig.add_subplot(111)
 
-            proj_mat = np.array(self.poses)
-            # NOTE trajectory Z needs to be multiplied by -1 
-            traj.plot(proj_mat[:, 0, 3], proj_mat[:, 2, 3], label='Trajectory')
+            R_T = np.array(self.poses)
+            traj.plot(R_T[:, 0, 3], R_T[:, 2, 3], label='Trajectory') # Plots X,Z
+            # traj.plot(R_T[:, 1, 3], R_T[:, 2, 3], label='Trajectory') # Plots Y,Z
             traj.set_xlabel('X')
             traj.set_ylabel('Z')
 
             x_world = self.world_points_3d[:, 0]
-            # y_world = self.world_points_3d[:, 1]
+            y_world = self.world_points_3d[:, 1]
             z_world = self.world_points_3d[:, 2]
-            traj.scatter(x_world, z_world, color='red', label='World Points')
+            # traj.scatter(y_world, z_world, color='red', label='World Points')
+            traj.scatter(x_world, z_world, 
+                         color='coral', label='World Points',
+                         s=8)
+            
+            # Plot optical axis arrow (x,y,z)
+            optical_axis = R_T[-1,:,:3] @ np.array((0,0,1)).T # 
+            # NOTE: XZ!
+            x = R_T[-1,0,-1]
+            z = R_T[-1,2,-1]
+            traj.arrow(x, z, optical_axis[0], optical_axis[2],
+                       width=0.1)
+
+            if centered:
+                traj.set_xlim(-15 + R_T[-1,0,-1], 15 + R_T[-1,0,-1])
+                # ylim window actually reads pose Z
+                traj.set_ylim(-15 + R_T[-1,-1,-1], 15 + R_T[-1,-1,-1])
 
             traj.legend()
 

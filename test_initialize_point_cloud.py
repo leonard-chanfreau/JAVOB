@@ -1,12 +1,13 @@
 import os
 from utils import load_image_data
 from VO import VO
+import numpy as np
 
 if __name__ == '__main__':
-    directory = "../kitti/05/image_0"
+    directory = "../data_KITTI/00/image_0"
     image_files = load_image_data(directory=directory)
 
-    calib_file = "../kitti/05/calib.txt"
+    calib_file = "../data_KITTI/00/calib.txt"
     vo = VO(calib_file=calib_file)
 
     # get two images
@@ -19,9 +20,13 @@ if __name__ == '__main__':
 
     for idx, file in enumerate(image_files):
         print(idx)
+
+        if idx == 48:
+            b=2
+
         image = vo.read_image_(file=os.path.join(directory, file))
         vo.run(image=image)
 
-    vo.initialize_point_cloud(image=image)
+    # vo.initialize_point_cloud(image=image)
 
     a = 2
