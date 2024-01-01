@@ -43,9 +43,8 @@ class VO():
 
         # internal state
         self.iteration = 0
+        self.retriangulate_calls = 0
 
-        # DEBUG TODO DELETE
-        self.debug = False
 
         # implemented feature extraction algorithms and their hyper params
         self.feature_extraction_algorithms_config = {
@@ -176,9 +175,9 @@ class VO():
         last_pose = np.array(self.poses)[-1,:,:]
         before_last_pose = np.array(self.poses)[-2,:,:]
         raw_travel = before_last_pose[:,3] - last_pose[:,3]
-        print(f"raw travel: {raw_travel}")
+        # print(f"raw travel: {raw_travel}")
         travel = np.linalg.norm(before_last_pose[:,3] - last_pose[:,3])
-        print(f"dist travel: {travel}")
+        # print(f"dist travel: {travel}")
         if travel > 1:
             b=2
         
@@ -204,7 +203,7 @@ class VO():
 
 
 
-    def match_features(self, method: str, descriptor_prev=None):
+    def match_features(self, method: str, descriptor_prev=None, ratio_test=False):
         '''
         Parameters
         ----------
@@ -216,6 +215,10 @@ class VO():
         num_matches_previous (for 3d2d only): int
             Number of 3D world points to match new query (keyframe) to.
             For example, set equal to len(self.query_features)
+        ratio_test: bool
+            NOTE: BEWARE using knn leads to early implosion of VO!!!???
+            True, uses KNN matching and apply ratio test for matching.
+            False runs Brute Force matching with no ratio test.
 
         Comments
         -------
@@ -243,8 +246,18 @@ class VO():
         else:
             raise ValueError("Invalid retrieval method. Use '2d2d' or '3d2d'.")
 
-        bf = cv2.BFMatcher(normType=cv2.NORM_L1, crossCheck=True)
-        matches = bf.match(self.query_features["descriptors"], descriptor_prev)
+        if ratio_test:
+            bf = cv2.BFMatcher(normType=cv2.NORM_L1, crossCheck=False) # False crossCheck
+            knn_output = bf.knnMatch(self.query_features["descriptors"], descriptor_prev,k=2)
+            # Apply ratio test
+            threshold = 0.8
+            matches = []
+            for m,n in knn_output:
+                if m.distance < threshold * n.distance:
+                    matches.append(m)
+        else:
+            bf = cv2.BFMatcher(normType=cv2.NORM_L1, crossCheck=True)
+            matches = bf.match(self.query_features["descriptors"], descriptor_prev)
         return matches
 
     def estimate_camera_pose(self, matches: Tuple[cv2.DMatch]):
@@ -454,6 +467,12 @@ class VO():
         self.world_points_3d = np.vstack((self.world_points_3d, new_3d_points))
         self.num_keyframe_points_3d = points_3d.shape[0]
         #self.plot_map()
+
+        # DEBUGGING
+        # Report number of retriangulation calls
+        self.retriangulate_calls += 1
+        print(f"NEW TRIANGULATION CALL {self.retriangulate_calls}")
+        print(f"Number of new points: {new_3d_points.shape[0]}")
         
         
 
@@ -577,6 +596,10 @@ class VO():
             
             if project_points is True:
                 # Our own reprojectPoints() function works
+
+                # TODO new feature: reproject 3D points that fall within a bounding sphere
+                # of the current pose
+
                 points = self.reprojectPoints(self.world_points_3d[:,:3], 
                                               np.array(self.poses)[-1,:,:], 
                                               self.K)
@@ -588,7 +611,7 @@ class VO():
 
                 # # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
                 # # Attempting cv2.projectPoints implementation. 
-                # # Still fails, returns NaN
+                # # STILL FAILS, returns NaN
                 # projected_points, _ = cv2.projectPoints(\
                 #     objectPoints=self.world_points_3d[:,:3].copy(), 
                 #     rvec=self.poses[:,:3,-1], 
@@ -609,7 +632,6 @@ class VO():
         
         elif mode == 'traj2d':
             #TODO later: plot new 3d points in blue, old 3d points in different shade.
-                # NOTE points are in world frame
             
             traj_plot_number = 2 # to not overwrite 'match'
 
@@ -624,48 +646,53 @@ class VO():
                 traj = fig.add_subplot(111)
 
             R_T = np.array(self.poses)
+
+            # XZ
             traj.plot(R_T[:, 0, 3], R_T[:, 2, 3], label='Trajectory') # Plots X,Z
-            # traj.plot(R_T[:, 1, 3], R_T[:, 2, 3], label='Trajectory') # Plots Y,Z
             traj.set_xlabel('X')
             traj.set_ylabel('Z')
 
+            # # XY
+            # traj.plot(R_T[:, 0, 3], R_T[:, 1, 3], label='Trajectory') # Plots X,Y
+            # traj.set_xlabel('X')
+            # traj.set_ylabel('Y')
+
+            # Plot point cloud
             x_world = self.world_points_3d[:, 0]
             y_world = self.world_points_3d[:, 1]
             z_world = self.world_points_3d[:, 2]
-            # traj.scatter(y_world, z_world, color='red', label='World Points')
+
+            # XZ
             traj.scatter(x_world, z_world, 
                          color='coral', label='World Points',
-                         s=8)
+                         s=8) 
+            
+            # # XY
+            # traj.scatter(x_world, y_world, 
+            #              color='coral', label='World Points',
+            #              s=8)
             
             # Plot optical axis arrow (x,y,z)
             optical_axis = R_T[-1,:,:3] @ np.array((0,0,1)).T # 
-            # NOTE: XZ!
+            # NOTE: XZ! b/c in camera frame TODO CHECK THIS
             x = R_T[-1,0,-1]
             z = R_T[-1,2,-1]
             traj.arrow(x, z, optical_axis[0], optical_axis[2],
                        width=0.1)
 
             if centered:
+                # Plots XZ
                 traj.set_xlim(-15 + R_T[-1,0,-1], 15 + R_T[-1,0,-1])
-                # ylim window actually reads pose Z
                 traj.set_ylim(-15 + R_T[-1,-1,-1], 15 + R_T[-1,-1,-1])
+
+                # # Plots XY
+                # traj.set_xlim(-15 + R_T[-1,0,-1], 15 + R_T[-1,0,-1])
+                # traj.set_ylim(-15 + R_T[-1,1,-1], 15 + R_T[-1,1,-1])
 
             traj.legend()
 
             plt.draw()
             plt.pause(0.001)
-
-            # # OLD NOTES TO COME BACK TO
-            # Plot pose
-            # num_poses = len(self.poses)
-            # pose_figsize=(7, 8)
-            # _, ax = plt.subplots(figsize=pose_figsize)
-            
-            # for i, pose in enumerate(self.poses):
-            #     # Extract translation
-            #     xy = pose[:,-1]
-
-            #     # Ground plane in camera xz plane, 3D points in world frame
         
         elif mode == 'traj3d':
 

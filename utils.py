@@ -24,3 +24,5 @@ def load_image_data(directory: str, filetype: str = 'png'):
     image_files = [x for x in image_files if x.endswith(filetype)]
 
     return sorted(image_files)
+    # return sorted(image_files)[80:] # FOR DEBUGGING BEFORE TURN
+    # return sorted(image_files)[110:] # FOR DEBUGGING JUST AFTER TURN
