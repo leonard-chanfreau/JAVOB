@@ -32,6 +32,9 @@ class VO():
         self.keyframe_pos = None
         self.query_frame = None
 
+        # KLT
+        self.prev_frame = None
+
         # Database
         self.keyframe_features = {} # overwrite every time new keyframe is created. {cv2.features, cv2.desciptors}
                                 # storing 2D feature (u,v) and its HoG descriptor. Called via {"keypoints", "descriptors"}
@@ -86,6 +89,54 @@ class VO():
         # self.query_features = {"keypoints": keypoints, "descriptors": descriptors}
         return {"keypoints": keypoints, "descriptors": descriptors}
         #TODO: store query image descriptors in self.world_points_3d ---> THIS MAY GO IN TRIANGULATE() function
+    
+    def klt_track(self):
+        '''
+        Track features from previous frame.
+
+        Parameters
+        ----------
+
+        Returns
+        -------
+        Good points. In continuous run, if number of good points < threshold, triangulate new w.r.t keyframe.
+        '''
+        pass
+        # Parameters for lucas kanade optical flow
+        lk_params = dict( winSize  = (15, 15),
+                        maxLevel = 2,
+                        criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 0.03))
+        # Create some random colors
+        color = np.random.randint(0, 255, (100, 3))
+        # Take first frame and find corners in it
+        p0 = self.query_features["keypoints"]
+        # Create a mask image for drawing purposes
+        mask = np.zeros_like(self.query_frame)
+
+        # TODO here belowwwwwwwww~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+        # while(1):
+        #     # calculate optical flow
+        #     p1, st, err = cv.calcOpticalFlowPyrLK(self.prev_frame, self.query_frame, p0, None, **lk_params)
+        #     # Select good points
+        #     if p1 is not None:
+        #         good_new = p1[st==1]
+        #         good_old = p0[st==1]
+        #     # draw the tracks
+        #     for i, (new, old) in enumerate(zip(good_new, good_old)):
+        #         a, b = new.ravel()
+        #         c, d = old.ravel()
+        #         mask = cv.line(mask, (int(a), int(b)), (int(c), int(d)), color[i].tolist(), 2)
+        #         frame = cv.circle(frame, (int(a), int(b)), 5, color[i].tolist(), -1)
+        #     img = cv.add(frame, mask)
+        #     cv.imshow('frame', img)
+        #     k = cv.waitKey(30) & 0xff
+        #     if k == 27:
+        #         break
+        #     # Now update the previous frame and previous points
+        #     old_gray = frame_gray.copy()
+        #     p0 = good_new.reshape(-1, 1, 2)
+
 
     def initialize_point_cloud(self, image: np.ndarray):
         """
@@ -128,18 +179,20 @@ class VO():
         else:
             return False
 
-    def run(self, image: np.ndarray):
+    def run_normal(self, image: np.ndarray):
         '''
 
         Parameters
         ----------
         image
+        mode
+            'normal'
+            'klt'
 
         Returns
         -------
 
         '''
-
         # match threshold
         thresh_inliers = 60
 
@@ -193,6 +246,73 @@ class VO():
 
         # Check if enough inliers are found,
         # else reinit new keyframe and expand point cloud using new keyframe and old keyframe
+        if (num_inliers < thresh_inliers) or (self.iteration % 4 == 0): # TODO: Maybe rather a percentage of point cloud
+            matches = self.match_features("2d2d")
+            self.triangulate_new_points(pose, matches)   #TODO: Maybe a wrapper as initialize point cloud that checks if camera are distant enough
+            self.keyframe = image
+            self.keyframe_pos = self.poses[-1]
+            self.keyframe_features = self.query_features
+            return
+        
+    def run_klt(self, image: np.ndarray):
+    
+        # TODO!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+        # match threshold
+        thresh_inliers = 60
+
+        # set very first keyframe
+        if self.keyframe is None:
+            self.keyframe = image
+            self.keyframe_features = self.extract_features(image=image, algorithm="sift")
+            self.iteration += 1
+            return
+
+        # initialize first point cloud and set new keyframe
+        if self.world_points_3d is None:
+            self.query_frame = image
+            if self.initialize_point_cloud(image=image):
+                self.keyframe = image
+                self.keyframe_pos = self.poses[-1]
+                self.keyframe_features = self.extract_features(image=image, algorithm="sift")
+            self.iteration += 1
+            return
+
+        # continuous run
+        # extract features and find matches between self.query_features
+        # and self.world_points_3d[-self.num_keyframe_points_3d:, 3:] (CURRENT keyframe points)
+        self.query_frame = image
+        self.query_features = self.extract_features(image=image, algorithm="sift")
+        # matches = self.match_features(method="3d2d")
+        # TODO TRACK FEATURES
+        good_keypoints = self.klt_track()
+        self.prev_frame = image # TODO check if this goes here
+
+        threshold = 60
+        if len(good_keypoints) < threshold:
+            # Extract SIFT features in the previous frame and current frame using SIFT toolbox
+            # Match keypoints in these two frames using SIFT toolbox
+            # Estimate fundamental matrix by Matlab function estimateFundamentalMatrix
+            # Estimate the current camera pose by decomposing Fundamental Matrix
+            # Triangulate Landmarks
+        
+        # TODO here belowwwwwwwww~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+        # estimate cam pose
+        pose, num_inliers = self.estimate_camera_pose(matches=matches)
+        self.poses.append(pose)
+        
+        print(f"#Inliers : {num_inliers}")
+        self.iteration += 1
+        
+        self.visualize(mode='match', matches=matches)
+        self.visualize(mode="traj2d", centered=True)
+        b=2
+        
+        #if self.iteration > 25:
+            #self.plot_map()
+
+        # Check if enough inliers are found,
+        # else reinit new keyframe and expand point cloud using new keyframe and old keyframe
         if num_inliers < thresh_inliers: # TODO: Maybe rather a percentage of point cloud
             matches = self.match_features("2d2d")
             self.triangulate_new_points(pose, matches)   #TODO: Maybe a wrapper as initialize point cloud that checks if camera are distant enough
@@ -200,6 +320,7 @@ class VO():
             self.keyframe_pos = self.poses[-1]
             self.keyframe_features = self.query_features
             return
+
 
 
 
@@ -440,6 +561,8 @@ class VO():
         # plt.show()
         
         #self.plot_map()
+
+        # testing last frame
 
         points_4d = cv2.triangulatePoints(M_keyframe, M_query, p_keyframe, p_query)
         # Un-homogenize points

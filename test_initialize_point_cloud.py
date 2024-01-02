@@ -21,11 +21,9 @@ if __name__ == '__main__':
     for idx, file in enumerate(image_files):
         print(idx)
 
-        if idx == 48:
-            b=2
-
         image = vo.read_image_(file=os.path.join(directory, file))
-        vo.run(image=image)
+        vo.run_normal(image=image)
+        # vo.run_klt(image=image)
 
     # vo.initialize_point_cloud(image=image)
 
